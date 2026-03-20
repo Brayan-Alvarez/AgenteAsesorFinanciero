@@ -1,0 +1,44 @@
+# ============================================================
+# AgenteAsesorFinanciero — .gitignore
+# ============================================================
+
+# --- Secrets & credentials (NEVER commit these) ---
+.env
+credentials/
+
+# --- Python cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Pytest ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Distribution / packaging ---
+dist/
+build/
+*.egg-info/
+
+# --- Streamlit ---
+.streamlit/secrets.toml

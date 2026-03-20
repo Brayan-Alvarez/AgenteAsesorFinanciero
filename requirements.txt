@@ -1,0 +1,33 @@
+# ============================================================
+# AgenteAsesorFinanciero — Python dependencies
+# Python 3.12+
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# --- LangGraph agent engine ---
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# --- LLM providers ---
+# Local dev: Ollama
+langchain-ollama>=0.2.0
+# Cloud/prod: Google Gemini
+langchain-google-genai>=2.0.0
+
+# --- Google Sheets integration ---
+gspread>=6.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+
+# --- Data processing ---
+pandas>=2.2.0
+
+# --- UI ---
+streamlit>=1.40.0
+
+# --- Charts ---
+plotly>=5.24.0
+
+# --- Utilities ---
+python-dotenv>=1.0.0   # Load .env variables in local dev
