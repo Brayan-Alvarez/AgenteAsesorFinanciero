@@ -7,10 +7,14 @@ Responsibilities:
 - Load expense tabs (one per person per month) into a unified DataFrame.
 - Normalize column types (e.g., parse dates, cast Monto to int).
 
-Expected Sheets structure:
-  Budget sheet  — columns: Categoría, Presupuesto
-  Expense tabs  — columns: Fecha, Categoría, Descripción, Monto, Observaciones
-                — tab naming: "Enero - Name", "Febrero - Name", etc.
+Actual Sheets structure (discovered from live data):
+  Budget spreadsheet  — "Gastos [Person]" tabs with a multi-row layout.
+                        Category group names in column A; "Total al mes:" marker
+                        in column C; annual total in column P (index 15).
+  Expense tabs        — columns: Fecha, Categoría, Descripción, Monto, Observaciones
+                        (plus extra summary columns to the right that are ignored).
+                      — tab naming: "Enero Sofi", "Febrero Belmont", etc. (space only,
+                        no dash between month and person name).
 """
 
 import logging
@@ -36,9 +40,12 @@ SPANISH_MONTHS = [
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ]
 
-# Regex pattern for expense tab names: "Enero - Name" or "Febrero - Ana María"
-# Group 1 → month (e.g. "Enero"), Group 2 → person name (e.g. "Ana María")
-_TAB_PATTERN = re.compile(r"^([A-Za-záéíóúüÁÉÍÓÚÜñÑ]+)\s+-\s+(.+)$")
+# Regex pattern for expense tab names: "Enero Sofi", "Febrero Belmont", etc.
+# The real spreadsheet uses a single space (no dash) between month and name.
+# Group 1 → month (e.g. "Enero"), Group 2 → person name (e.g. "Belmont")
+# Non-month tabs like "Resumen Sofi" or "Menu desplegable" are filtered out
+# afterwards by the SPANISH_MONTHS membership check.
+_TAB_PATTERN = re.compile(r"^([A-Za-záéíóúüÁÉÍÓÚÜñÑ]+)\s+(.+)$")
 
 # Expected columns in the expenses sheet (exact, case-sensitive — must match Sheets).
 EXPENSE_COLUMNS = ["Fecha", "Categoría", "Descripción", "Monto", "Observaciones"]
@@ -81,22 +88,32 @@ def get_gspread_client() -> gspread.Client:
 
 def load_budget(client: gspread.Client) -> pd.DataFrame:
     """
-    Load the annual budget spreadsheet into a DataFrame.
+    Load the annual budget from all "Gastos [Person]" tabs in BUDGET_SHEET_ID.
 
-    Reads the first sheet of the BUDGET_SHEET_ID spreadsheet.
-    Expected columns: Categoría, Presupuesto
+    The budget spreadsheet uses a multi-row layout (not a simple two-column table).
+    Each "Gastos *" tab looks like:
+
+        Row structure:
+          Column A (0)  — category group name (e.g. "Deuda", "Transporte")
+                          only present on the "Total al mes:" row for that group
+          Column C (2)  — either a subcategory name or the marker "Total al mes:"
+          Column P (15) — annual total for that row (sum of all 12 months)
+
+    This function collects only the "Total al mes:" rows (one per category group)
+    and sums the annual totals across all "Gastos *" tabs so the result represents
+    the combined household budget.
 
     Args:
         client: An authenticated gspread Client.
 
     Returns:
-        DataFrame with columns ['Categoría', 'Presupuesto'] where
-        Presupuesto values are integers (COP, no decimals).
-        Returns an empty DataFrame with the correct columns if the sheet is empty.
+        DataFrame with columns ['Categoría', 'Presupuesto'] (Presupuesto as int COP).
+        Returns an empty DataFrame if no "Gastos *" tabs are found.
 
     Raises:
         gspread.exceptions.SpreadsheetNotFound: If BUDGET_SHEET_ID is wrong or
             the service account has not been granted access to the spreadsheet.
+        ValueError: If BUDGET_SHEET_ID env var is not set.
     """
     sheet_id = os.getenv("BUDGET_SHEET_ID")
     if not sheet_id:
@@ -104,31 +121,58 @@ def load_budget(client: gspread.Client) -> pd.DataFrame:
 
     spreadsheet = client.open_by_key(sheet_id)
 
-    # The budget lives in the first (and only) worksheet.
-    worksheet = spreadsheet.sheet1
+    # Find all "Gastos *" tabs (one per person, e.g. "Gastos Brayan", "Gastos Sofi").
+    gastos_tabs = [ws for ws in spreadsheet.worksheets() if ws.title.startswith("Gastos ")]
 
-    # get_all_records() returns a list of dicts, one per row, using the
-    # header row as keys. Empty rows are automatically skipped.
-    records = worksheet.get_all_records()
-
-    if not records:
-        logger.warning("Budget sheet is empty — returning empty DataFrame.")
+    if not gastos_tabs:
+        logger.warning("No 'Gastos *' tabs found in budget spreadsheet — returning empty.")
         return pd.DataFrame(columns=["Categoría", "Presupuesto"])
 
-    df = pd.DataFrame(records)
+    # Accumulate {category: total_annual_cop} across all tabs.
+    totals: dict[str, int] = {}
 
-    # Validate that the expected columns exist before doing type conversion.
-    _assert_columns(df, ["Categoría", "Presupuesto"], source="budget sheet")
+    for worksheet in gastos_tabs:
+        rows = worksheet.get_all_values()
+        current_category = ""
 
-    # Presupuesto may arrive as a string with thousand separators (e.g. "1.500.000").
-    # Strip non-numeric characters and cast to int.
-    df["Presupuesto"] = _to_int_cop(df["Presupuesto"])
+        for row in rows:
+            # Skip rows that are too short to contain the columns we need.
+            if len(row) <= 15:
+                continue
 
-    # Drop rows where Categoría is empty (can happen with trailing blank rows).
-    df = df[df["Categoría"].astype(str).str.strip() != ""]
+            # Column A (index 0): category group name appears only on the
+            # "Total al mes:" row for that group.
+            if row[0].strip():
+                current_category = row[0].strip()
 
-    logger.info("Loaded budget sheet: %d categories.", len(df))
-    return df[["Categoría", "Presupuesto"]].reset_index(drop=True)
+            # Column C (index 2): look for the "Total al mes:" marker.
+            if row[2].strip() != "Total al mes:":
+                continue
+
+            # Column P (index 15): annual total for this category.
+            annual_str = row[15].strip()
+            if not annual_str:
+                continue
+
+            annual_int = _to_int_cop(pd.Series([annual_str])).iloc[0]
+
+            # Sum across tabs so the result is the combined household budget.
+            totals[current_category] = totals.get(current_category, 0) + annual_int
+
+        logger.info("Parsed budget tab '%s'.", worksheet.title)
+
+    if not totals:
+        logger.warning("No budget rows found — returning empty DataFrame.")
+        return pd.DataFrame(columns=["Categoría", "Presupuesto"])
+
+    df = (
+        pd.DataFrame(list(totals.items()), columns=["Categoría", "Presupuesto"])
+        .sort_values("Categoría")
+        .reset_index(drop=True)
+    )
+
+    logger.info("Loaded budget: %d categories across %d tab(s).", len(df), len(gastos_tabs))
+    return df
 
 
 def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFrame:
@@ -197,7 +241,10 @@ def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFra
             )
             continue
 
-        records = worksheet.get_all_records()
+        # expected_headers restricts gspread to only the first 5 columns we need.
+        # Without it, gspread raises GSpreadException when the tab has extra
+        # columns whose headers are blank (the budget-summary columns on the right).
+        records = worksheet.get_all_records(expected_headers=EXPENSE_COLUMNS)
 
         if not records:
             logger.info("Tab '%s' is empty — skipping.", tab_name)
@@ -216,9 +263,14 @@ def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFra
         # Cast Monto to int — amounts are always whole COP pesos.
         df["Monto"] = _to_int_cop(df["Monto"])
 
-        # Parse Fecha from "DD/MM/YYYY" string to datetime.
+        # Parse Fecha to datetime. Different people use different separators:
+        # Sofi → "01/01/2026", Belmont → "01-01-2026".
+        # format="mixed" lets pandas handle both in the same column.
+        # dayfirst=True is required for DD/MM/YYYY (not MM/DD/YYYY) interpretation.
         # errors="coerce" turns unparseable values into NaT instead of crashing.
-        df["Fecha"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+        df["Fecha"] = pd.to_datetime(
+            df["Fecha"], format="mixed", dayfirst=True, errors="coerce"
+        )
 
         # Warn about rows where Fecha could not be parsed (but keep them).
         bad_dates = df["Fecha"].isna().sum()
@@ -255,6 +307,60 @@ def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFra
 
 
 # ---------------------------------------------------------------------------
+# Convenience wrappers (no arguments — read everything from env vars)
+# ---------------------------------------------------------------------------
+
+def load_budget_sheet() -> pd.DataFrame:
+    """
+    Convenience wrapper: authenticate and load the budget sheet in one call.
+
+    Reads credentials and sheet ID entirely from environment variables, so
+    callers don't need to instantiate a gspread Client themselves.
+
+    Returns:
+        DataFrame with columns ['Categoría', 'Presupuesto'] (Presupuesto as int).
+
+    Raises:
+        FileNotFoundError: If the credentials file is missing.
+        ValueError: If BUDGET_SHEET_ID or GOOGLE_CREDENTIALS_PATH is not set.
+        gspread.exceptions.SpreadsheetNotFound: If the sheet ID is wrong.
+    """
+    client = get_gspread_client()
+    return load_budget(client)
+
+
+def load_expenses_sheet() -> pd.DataFrame:
+    """
+    Convenience wrapper: authenticate and load all expense tabs in one call.
+
+    Person names are read from the PERSON_NAMES environment variable
+    (comma-separated, e.g. "Ana,Carlos").
+
+    Returns:
+        Unified expenses DataFrame with columns:
+            Fecha, Categoría, Descripción, Monto, Observaciones, Persona, Mes.
+
+    Raises:
+        FileNotFoundError: If the credentials file is missing.
+        ValueError: If EXPENSES_SHEET_ID, PERSON_NAMES, or
+                    GOOGLE_CREDENTIALS_PATH is not set.
+        gspread.exceptions.SpreadsheetNotFound: If the sheet ID is wrong.
+    """
+    person_names_raw = os.getenv("PERSON_NAMES", "")
+    if not person_names_raw:
+        raise ValueError(
+            "PERSON_NAMES environment variable is not set. "
+            "Set it to a comma-separated list of names matching the tab headers, "
+            "e.g. PERSON_NAMES=Ana,Carlos"
+        )
+    # Split on comma and strip surrounding whitespace from each name.
+    person_names = [name.strip() for name in person_names_raw.split(",") if name.strip()]
+
+    client = get_gspread_client()
+    return load_expenses(client, person_names)
+
+
+# ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
@@ -274,11 +380,28 @@ def _to_int_cop(series: pd.Series) -> pd.Series:
     Returns:
         Series of Python ints.
     """
-    # Convert to string first to handle mixed types uniformly.
+    # Fast path: gspread returns numeric cells as Python ints or floats.
+    # When the whole column is already numeric, cast directly — no string
+    # parsing needed and no risk of mangling thousand-separator strings.
+    if pd.api.types.is_numeric_dtype(series):
+        return series.fillna(0).astype(int)
+
+    # Slow path: values are strings with various formatting styles:
+    #   - Colombian dot-separated thousands:  " $4.219.992"
+    #   - US comma-separated + cents:         "$22,500.00"
+    #   - Plain string integers:              "150000"
     cleaned = (
         series.astype(str)
         .str.strip()
+        # Strip trailing decimal cents (1–2 digits only) BEFORE removing thousand
+        # separators. "\.\d{1,2}$" matches ".00" or ".5" but NOT ".000" (3 digits),
+        # so Colombian thousand-separator dots (always followed by 3 digits) are safe.
+        # Without this step, "$22,500.00" → after removing "," → "$22500.00" →
+        # after removing non-digits (including ".") → "2250000" — off by 10×.
+        .str.replace(r"\.\d{1,2}$", "", regex=True)
         # Remove common thousand separators (both dot and comma formats).
+        # The lookahead (?=\d{3}) ensures we only remove separators, not
+        # meaningful dots (like a lone decimal point with 3+ digits after it).
         .str.replace(r"[\.,](?=\d{3})", "", regex=True)
         # Remove any remaining non-numeric characters (e.g., "$", "COP", spaces).
         .str.replace(r"[^\d-]", "", regex=True)
