@@ -14,8 +14,11 @@ Design:
     - Cache is invalidated on app restart (no persistence to disk).
 """
 
+import logging
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Default TTL in seconds (5 minutes). Can be overridden per call.
 DEFAULT_TTL_SECONDS = 300
@@ -33,8 +36,24 @@ def get(key: str) -> Any | None:
 
     Returns:
         The cached value, or None if the key is missing or expired.
+        Expired entries are removed from the cache on access (lazy eviction).
     """
-    pass  # TODO: implement in Phase 1
+    entry = _cache.get(key)
+
+    if entry is None:
+        # Key was never set.
+        return None
+
+    value, expiry = entry
+
+    if time.time() > expiry:
+        # Entry exists but has expired — evict it now (lazy cleanup).
+        del _cache[key]
+        logger.debug("Cache miss (expired): '%s'", key)
+        return None
+
+    logger.debug("Cache hit: '%s'", key)
+    return value
 
 
 def set(key: str, value: Any, ttl: int = DEFAULT_TTL_SECONDS) -> None:
@@ -43,10 +62,12 @@ def set(key: str, value: Any, ttl: int = DEFAULT_TTL_SECONDS) -> None:
 
     Args:
         key: Cache key string.
-        value: Any Python object to cache.
+        value: Any Python object to cache (typically a DataFrame or dict).
         ttl: Time-to-live in seconds. After this duration, get() returns None.
     """
-    pass  # TODO: implement in Phase 1
+    expiry = time.time() + ttl
+    _cache[key] = (value, expiry)
+    logger.debug("Cache set: '%s' (TTL=%ds)", key, ttl)
 
 
 def invalidate(key: str) -> None:
@@ -59,7 +80,9 @@ def invalidate(key: str) -> None:
     Args:
         key: Cache key to remove. No-op if the key does not exist.
     """
-    pass  # TODO: implement in Phase 1
+    removed = _cache.pop(key, None)
+    if removed is not None:
+        logger.debug("Cache invalidated: '%s'", key)
 
 
 def clear() -> None:
@@ -68,4 +91,6 @@ def clear() -> None:
 
     Typically called at the start of a new session to ensure fresh data.
     """
-    pass  # TODO: implement in Phase 1
+    count = len(_cache)
+    _cache.clear()
+    logger.debug("Cache cleared: %d entries removed.", count)
