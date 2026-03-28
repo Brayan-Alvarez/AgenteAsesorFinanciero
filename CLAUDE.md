@@ -197,13 +197,13 @@ Key behaviors:
 Work through these phases in order. Do not skip ahead.
 
 ### Phase 1 — Foundations (current focus)
-- [ ] Initialize Git repo with `.gitignore` and this `CLAUDE.md`
-- [ ] Create `requirements.txt` with all dependencies
-- [ ] Create `.env.example`
-- [ ] Implement `data/sheets_loader.py`
-- [ ] Implement `data/data_processor.py`
-- [ ] Implement `data/cache.py`
-- [ ] Write basic tests in `tests/test_loader.py`
+- [x] Initialize Git repo with `.gitignore` and this `CLAUDE.md`
+- [x] Create `requirements.txt` with all dependencies
+- [x] Create `.env.example`
+- [x] Implement `data/sheets_loader.py`
+- [x] Implement `data/data_processor.py`
+- [x] Implement `data/cache.py`
+- [x] Write basic tests in `tests/test_loader.py`
 
 ### Phase 2 — LangGraph Agent
 - [ ] Implement `agent/llm_factory.py`
