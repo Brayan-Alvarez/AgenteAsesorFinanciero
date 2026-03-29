@@ -212,15 +212,15 @@ Work through these phases in order. Do not skip ahead.
 - [x] Implement `agent/graph.py` (StateGraph)
 - [x] Test conversational flow in terminal
 
-### Phase 3 — FastAPI Backend ← CURRENT
+### Phase 3 — FastAPI Backend
 - [x] api/main.py — FastAPI app with CORS
 - [x] api/models.py — Pydantic models
 - [x] api/routes/chat.py — POST /api/chat
 - [x] api/routes/dashboard.py — dashboard endpoints
 - [x] Test all endpoints with curl before starting frontend
 
-### Phase 4 — React Frontend
-- [ ] Bootstrap Vite + React in frontend/
+### Phase 4 — React Frontend ← CURRENT
+- [x] Bootstrap Vite + React in frontend/
 - [ ] src/api/client.js — centralized API calls
 - [ ] Dashboard.jsx — 4 charts with Recharts
 - [ ] Chat.jsx — conversation UI
