@@ -213,11 +213,11 @@ Work through these phases in order. Do not skip ahead.
 - [x] Test conversational flow in terminal
 
 ### Phase 3 — FastAPI Backend ← CURRENT
-- [ ] api/main.py — FastAPI app with CORS
-- [ ] api/models.py — Pydantic models
-- [ ] api/routes/chat.py — POST /api/chat
-- [ ] api/routes/dashboard.py — dashboard endpoints
-- [ ] Test all endpoints with curl before starting frontend
+- [x] api/main.py — FastAPI app with CORS
+- [x] api/models.py — Pydantic models
+- [x] api/routes/chat.py — POST /api/chat
+- [x] api/routes/dashboard.py — dashboard endpoints
+- [x] Test all endpoints with curl before starting frontend
 
 ### Phase 4 — React Frontend
 - [ ] Bootstrap Vite + React in frontend/

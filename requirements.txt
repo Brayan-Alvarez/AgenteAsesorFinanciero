@@ -29,5 +29,9 @@ streamlit>=1.40.0
 # --- Charts ---
 plotly>=5.24.0
 
+# --- API backend ---
+fastapi>=0.115.0        # Web framework for the REST API
+uvicorn[standard]>=0.30.0  # ASGI server to run FastAPI
+
 # --- Utilities ---
 python-dotenv>=1.0.0   # Load .env variables in local dev
