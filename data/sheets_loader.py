@@ -241,16 +241,23 @@ def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFra
             )
             continue
 
-        # expected_headers restricts gspread to only the first 5 columns we need.
-        # Without it, gspread raises GSpreadException when the tab has extra
-        # columns whose headers are blank (the budget-summary columns on the right).
-        records = worksheet.get_all_records(expected_headers=EXPENSE_COLUMNS)
+        # Use get_all_values() instead of get_all_records() because the expense
+        # tabs have duplicate column headers: "Categoría" appears both in the
+        # data area (col B) and in a pivot/summary section further right.
+        # get_all_records() resolves duplicates to the LAST occurrence, which is
+        # the empty pivot column.  Slicing to the first 5 columns avoids this.
+        raw_rows = worksheet.get_all_values()
 
-        if not records:
+        if len(raw_rows) < 2:
             logger.info("Tab '%s' is empty — skipping.", tab_name)
             continue
 
-        df = pd.DataFrame(records)
+        # Slice every row to exactly the 5 expense columns we care about.
+        n_cols = len(EXPENSE_COLUMNS)
+        header = raw_rows[0][:n_cols]
+        data   = [row[:n_cols] for row in raw_rows[1:]]
+
+        df = pd.DataFrame(data, columns=header)
 
         # Validate expected columns exist before processing.
         _assert_columns(df, EXPENSE_COLUMNS, source=f"tab '{tab_name}'")
@@ -283,6 +290,12 @@ def load_expenses(client: gspread.Client, person_names: list[str]) -> pd.DataFra
 
         # Drop completely empty rows (can occur if the sheet has trailing blank rows).
         df = df[df["Descripción"].astype(str).str.strip() != ""]
+
+        # Drop rows with blank or formula-artifact categories ("", "0", "$0.00").
+        # These come from empty category cells that Sheets fills with formula results.
+        df["Categoría"] = df["Categoría"].astype(str).str.strip()
+        df = df[df["Categoría"].str.len() > 0]
+        df = df[~df["Categoría"].str.fullmatch(r"[\d\$\.\,\s]+")]
 
         all_frames.append(df)
         logger.info("Loaded tab '%s': %d rows.", tab_name, len(df))

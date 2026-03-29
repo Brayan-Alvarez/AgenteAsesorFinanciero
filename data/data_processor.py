@@ -60,11 +60,16 @@ def get_budget_summary(
         return {}
 
     # --- Aggregate actual spending by category ---
+    # Cast Categoría to str and filter out blanks/formula artifacts (e.g. 0, "$0.00")
+    # before grouping, so sorted() never receives a mix of int and str values.
     if expenses_df.empty:
         actual_by_category: pd.Series = pd.Series(dtype=int)
     else:
+        clean_expenses = expenses_df.copy()
+        clean_expenses["Categoría"] = clean_expenses["Categoría"].astype(str).str.strip()
+        clean_expenses = clean_expenses[clean_expenses["Categoría"].astype(bool)]
         actual_by_category = (
-            expenses_df.groupby("Categoría")["Monto"]
+            clean_expenses.groupby("Categoría")["Monto"]
             .sum()
             .astype(int)
         )

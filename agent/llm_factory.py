@@ -32,4 +32,25 @@ def get_llm() -> ChatOllama | ChatGoogleGenerativeAI:
         ValueError: If LLM_PROVIDER is set to an unrecognized value.
         KeyError: If required env vars for the chosen provider are missing.
     """
-    pass  # TODO: implement in Phase 2
+    provider = os.getenv("LLM_PROVIDER", "ollama")
+
+    if provider == "ollama":
+        return ChatOllama(
+            model=os.getenv("OLLAMA_MODEL", "llama3.2"),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        )
+    elif provider == "gemini":
+        return ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=os.getenv("GEMINI_API_KEY"),
+        )
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER: '{provider}'. Use 'ollama' or 'gemini'.")
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    llm = get_llm()
+    response = llm.invoke("Say 'LLM connection successful' and nothing else.")
+    print(response.content)
