@@ -10,6 +10,7 @@
 
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
+import { AppProvider } from "./context/AppContext";
 import Chat from "./pages/Chat";
 import Dashboard from "./pages/Dashboard";
 
@@ -55,18 +56,22 @@ function NavBar() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      {/* NavBar rendered outside <Routes> so it stays on every page */}
-      <NavBar />
+    // AppProvider wraps BrowserRouter so context is available everywhere,
+    // including any future hooks that might need route info.
+    <AppProvider>
+      <BrowserRouter>
+        {/* NavBar rendered outside <Routes> so it stays on every page */}
+        <NavBar />
 
-      {/* Page content fills the remaining viewport height */}
-      <main style={styles.main}>
-        <Routes>
-          <Route path="/"     element={<Dashboard />} />
-          <Route path="/chat" element={<Chat />} />
-        </Routes>
-      </main>
-    </BrowserRouter>
+        {/* Page content fills the remaining viewport height */}
+        <main style={styles.main}>
+          <Routes>
+            <Route path="/"     element={<Dashboard />} />
+            <Route path="/chat" element={<Chat />} />
+          </Routes>
+        </main>
+      </BrowserRouter>
+    </AppProvider>
   );
 }
 

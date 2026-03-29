@@ -8,7 +8,12 @@
  * Chart 3 (bot-left):  Pie chart  — expense breakdown by category for selected month.
  * Chart 4 (bot-right): Bar chart  — spend comparison between Sofi and Belmont for selected month.
  *
- * Charts 3 & 4 react to the month selector at the top of the page.
+ * State strategy:
+ *   budgetData, trendData  — read from AppContext (fetched once on app start).
+ *   expensesCache          — read/written via AppContext; each month+person combo
+ *                            is fetched at most once per session.
+ *   selectedMonth          — local UI state (no value in sharing it globally).
+ *   expensesLoading/Error  — local (only relevant while this component is active).
  */
 
 import { useEffect, useState } from "react";
@@ -28,43 +33,35 @@ import {
   YAxis,
 } from "recharts";
 
-import { getBudget, getExpenses, getTrend } from "../api/client";
+import { useAppContext } from "../context/AppContext";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-// Consistent colour palette used across all charts.
 const COLORS = {
-  planned:  "#6366f1", // indigo  — budgeted amount
-  actual:   "#f59e0b", // amber   — actual spend
-  trend:    "#10b981", // emerald — monthly trend line
-  person1:  "#3b82f6", // blue    — Sofi
-  person2:  "#ec4899", // pink    — Belmont
+  planned:  "#6366f1",
+  actual:   "#f59e0b",
+  trend:    "#10b981",
+  person1:  "#3b82f6",
+  person2:  "#ec4899",
   pie: [
     "#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#ec4899",
     "#8b5cf6", "#14b8a6", "#f97316", "#06b6d4", "#84cc16",
   ],
 };
 
-// Spanish month names in calendar order — used to populate the month selector.
 const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-// People whose expenses are compared in chart 4.
-// Keep in sync with PERSON_NAMES in the backend .env.
 const PEOPLE = ["Sofi", "Belmont"];
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Format a COP integer for display, e.g. 2800000 → "$2.800.000".
- * Used in chart tooltips and axis ticks.
- */
 const formatCOP = (amount) =>
   new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -72,52 +69,32 @@ const formatCOP = (amount) =>
     maximumFractionDigits: 0,
   }).format(amount);
 
-/**
- * Shorten large COP amounts for Y-axis ticks so they don't overlap,
- * e.g. 2800000 → "$2,8M" or 500000 → "$500K".
- */
 const formatCOPShort = (amount) => {
   if (Math.abs(amount) >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
   if (Math.abs(amount) >= 1_000)     return `$${(amount / 1_000).toFixed(0)}K`;
   return `$${amount}`;
 };
 
-/** Tooltip formatter that wraps any value in formatCOP. */
 const copTooltipFormatter = (value) => [formatCOP(value), ""];
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Shown while data is loading. */
 function LoadingState() {
-  return (
-    <div style={styles.emptyState}>
-      <span>Cargando datos…</span>
-    </div>
-  );
+  return <div style={styles.emptyState}><span>Cargando datos…</span></div>;
 }
 
-/** Shown when a chart has no data to display. */
 function EmptyState() {
-  return (
-    <div style={styles.emptyState}>
-      <span>No hay datos disponibles</span>
-    </div>
-  );
+  return <div style={styles.emptyState}><span>No hay datos disponibles</span></div>;
 }
 
-/** Shown when a fetch fails. */
 function ErrorState({ message }) {
-  return (
-    <div style={{ ...styles.emptyState, color: "#ef4444" }}>
-      <span>⚠ {message}</span>
-    </div>
-  );
+  return <div style={{ ...styles.emptyState, color: "#ef4444" }}><span>⚠ {message}</span></div>;
 }
 
 // ---------------------------------------------------------------------------
-// Chart 1 — Budget vs Actual (all categories)
+// Chart 1 — Budget vs Actual
 // ---------------------------------------------------------------------------
 
 function BudgetChart({ data, loading, error }) {
@@ -129,13 +106,7 @@ function BudgetChart({ data, loading, error }) {
     <ResponsiveContainer width="100%" height={320}>
       <BarChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 80 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis
-          dataKey="name"
-          tick={{ fontSize: 11 }}
-          angle={-40}
-          textAnchor="end"
-          interval={0}
-        />
+        <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-40} textAnchor="end" interval={0} />
         <YAxis tickFormatter={formatCOPShort} tick={{ fontSize: 11 }} width={72} />
         <Tooltip formatter={copTooltipFormatter} />
         <Legend verticalAlign="top" />
@@ -147,7 +118,7 @@ function BudgetChart({ data, loading, error }) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart 2 — Monthly trend (line)
+// Chart 2 — Monthly trend
 // ---------------------------------------------------------------------------
 
 function TrendChart({ data, loading, error }) {
@@ -178,19 +149,15 @@ function TrendChart({ data, loading, error }) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart 3 — Expense breakdown by category for selected month (pie)
+// Chart 3 — Expense breakdown for selected month (pie)
 // ---------------------------------------------------------------------------
 
-/** Custom label rendered inside/outside pie slices. */
 function PieLabel({ cx, cy, midAngle, innerRadius, outerRadius, name, percent }) {
-  // Only draw a label when the slice is large enough to be readable.
   if (percent < 0.04) return null;
-
   const RADIAN = Math.PI / 180;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
   return (
     <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11}>
       {name.length > 10 ? `${name.slice(0, 9)}…` : name}
@@ -203,7 +170,6 @@ function ExpensePieChart({ data, loading, error }) {
   if (error)   return <ErrorState message={error} />;
   if (!data || data.length === 0) return <EmptyState />;
 
-  // Recharts Pie expects { name, value } shape.
   const pieData = data.map((item) => ({ name: item.category, value: item.total }));
 
   return (
@@ -231,31 +197,21 @@ function ExpensePieChart({ data, loading, error }) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart 4 — Spend comparison between people for selected month (bar)
+// Chart 4 — People comparison for selected month
 // ---------------------------------------------------------------------------
 
-/**
- * Merge two per-person expense arrays into a single array keyed by category,
- * so Recharts can render both people as side-by-side bars.
- *
- * Example output:
- *   [{ category: "Restaurantes", Sofi: 450000, Belmont: 320000 }, ...]
- */
-function mergeByCategory(expensesSofi, expensesBelmont) {
+function mergeByCategory(expensesPerson1, expensesPerson2) {
   const map = {};
-
-  for (const item of expensesSofi) {
+  for (const item of expensesPerson1) {
     map[item.category] = { category: item.category, [PEOPLE[0]]: item.total, [PEOPLE[1]]: 0 };
   }
-  for (const item of expensesBelmont) {
+  for (const item of expensesPerson2) {
     if (map[item.category]) {
       map[item.category][PEOPLE[1]] = item.total;
     } else {
       map[item.category] = { category: item.category, [PEOPLE[0]]: 0, [PEOPLE[1]]: item.total };
     }
   }
-
-  // Sort by combined total descending so the biggest categories appear first.
   return Object.values(map).sort(
     (a, b) => (b[PEOPLE[0]] + b[PEOPLE[1]]) - (a[PEOPLE[0]] + a[PEOPLE[1]])
   );
@@ -272,13 +228,7 @@ function PeopleComparisonChart({ dataPerson1, dataPerson2, loading, error }) {
     <ResponsiveContainer width="100%" height={320}>
       <BarChart data={merged} margin={{ top: 8, right: 16, left: 8, bottom: 80 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis
-          dataKey="category"
-          tick={{ fontSize: 11 }}
-          angle={-40}
-          textAnchor="end"
-          interval={0}
-        />
+        <XAxis dataKey="category" tick={{ fontSize: 11 }} angle={-40} textAnchor="end" interval={0} />
         <YAxis tickFormatter={formatCOPShort} tick={{ fontSize: 11 }} width={72} />
         <Tooltip formatter={copTooltipFormatter} />
         <Legend verticalAlign="top" />
@@ -294,60 +244,58 @@ function PeopleComparisonChart({ dataPerson1, dataPerson2, loading, error }) {
 // ---------------------------------------------------------------------------
 
 export default function Dashboard() {
-  // Detect current month index (0-based) to pre-select the month selector.
+  // Budget and trend come from AppContext — already fetched, no re-fetching.
+  const {
+    budgetData,
+    trendData,
+    isLoadingData,
+    dataError,
+    expensesCache,
+    fetchExpenses,
+  } = useAppContext();
+
+  // selectedMonth is local UI state — no need to share it globally.
   const currentMonthIndex = new Date().getMonth();
   const [selectedMonth, setSelectedMonth] = useState(MONTHS[currentMonthIndex]);
 
-  // --- Global data state ---
-  const [budgetData,  setBudgetData]  = useState([]);
-  const [trendData,   setTrendData]   = useState([]);
-  const [budgetLoading, setBudgetLoading] = useState(true);
-  const [trendLoading,  setTrendLoading]  = useState(true);
-  const [budgetError,   setBudgetError]   = useState(null);
-  const [trendError,    setTrendError]    = useState(null);
+  // Expenses loading/error are local because they only matter while
+  // this component is active and a month-specific fetch is in flight.
+  const [expensesLoading, setExpensesLoading] = useState(false);
+  const [expensesError,   setExpensesError]   = useState(null);
 
-  // --- Month-scoped data state ---
-  const [expensesCombined, setExpensesCombined] = useState([]);
-  const [expensesPerson1,  setExpensesPerson1]  = useState([]);
-  const [expensesPerson2,  setExpensesPerson2]  = useState([]);
-  const [expensesLoading,  setExpensesLoading]  = useState(true);
-  const [expensesError,    setExpensesError]    = useState(null);
+  // Derive the cache keys for the current month selection so we can read
+  // the cached expense arrays without prop-drilling the full cache.
+  const keyCombined = `${selectedMonth}|all`;
+  const keyPerson1  = `${selectedMonth}|${PEOPLE[0]}`;
+  const keyPerson2  = `${selectedMonth}|${PEOPLE[1]}`;
 
-  // Fetch budget and trend once on mount — these don't depend on the selected month.
+  // Fetch expenses for the selected month whenever it changes.
+  // fetchExpenses() is a no-op if the data is already in the cache.
   useEffect(() => {
-    getBudget()
-      .then(({ categories }) => {
-        // Transform into { name, planned, actual } shape expected by BudgetChart.
-        setBudgetData(categories);
-      })
-      .catch((err) => setBudgetError(err.message))
-      .finally(() => setBudgetLoading(false));
+    // Only show a spinner if at least one of the three combos is missing.
+    const allCached =
+      expensesCache[keyCombined] !== undefined &&
+      expensesCache[keyPerson1]  !== undefined &&
+      expensesCache[keyPerson2]  !== undefined;
 
-    getTrend()
-      .then(({ trend }) => setTrendData(trend))
-      .catch((err) => setTrendError(err.message))
-      .finally(() => setTrendLoading(false));
-  }, []);
+    if (allCached) return;
 
-  // Re-fetch expenses whenever the selected month changes.
-  useEffect(() => {
     setExpensesLoading(true);
     setExpensesError(null);
 
-    // Fetch combined + per-person in parallel for the selected month.
     Promise.all([
-      getExpenses(selectedMonth),
-      getExpenses(selectedMonth, PEOPLE[0]),
-      getExpenses(selectedMonth, PEOPLE[1]),
+      fetchExpenses(selectedMonth),
+      fetchExpenses(selectedMonth, PEOPLE[0]),
+      fetchExpenses(selectedMonth, PEOPLE[1]),
     ])
-      .then(([combined, person1, person2]) => {
-        setExpensesCombined(combined.items);
-        setExpensesPerson1(person1.items);
-        setExpensesPerson2(person2.items);
-      })
       .catch((err) => setExpensesError(err.message))
       .finally(() => setExpensesLoading(false));
-  }, [selectedMonth]);
+  }, [selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read current month's data from the cache (empty array until fetched).
+  const expensesCombined = expensesCache[keyCombined] ?? [];
+  const expensesPerson1  = expensesCache[keyPerson1]  ?? [];
+  const expensesPerson2  = expensesCache[keyPerson2]  ?? [];
 
   return (
     <div style={styles.page}>
@@ -355,11 +303,8 @@ export default function Dashboard() {
       <div style={styles.header}>
         <h1 style={styles.title}>Dashboard Financiero</h1>
 
-        {/* Month selector — controls charts 3 and 4 */}
         <div style={styles.monthSelector}>
-          <label htmlFor="month-select" style={styles.label}>
-            Mes:
-          </label>
+          <label htmlFor="month-select" style={styles.label}>Mes:</label>
           <select
             id="month-select"
             value={selectedMonth}
@@ -367,9 +312,7 @@ export default function Dashboard() {
             style={styles.select}
           >
             {MONTHS.map((month) => (
-              <option key={month} value={month}>
-                {month}
-              </option>
+              <option key={month} value={month}>{month}</option>
             ))}
           </select>
         </div>
@@ -378,19 +321,24 @@ export default function Dashboard() {
       {/* 2×2 chart grid */}
       <div style={styles.grid}>
 
-        {/* Chart 1 — Budget vs Actual */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Presupuesto vs Gasto real (anual)</h2>
-          <BudgetChart data={budgetData} loading={budgetLoading} error={budgetError} />
+          <BudgetChart
+            data={budgetData}
+            loading={isLoadingData}
+            error={dataError}
+          />
         </div>
 
-        {/* Chart 2 — Monthly trend */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Tendencia mensual</h2>
-          <TrendChart data={trendData} loading={trendLoading} error={trendError} />
+          <TrendChart
+            data={trendData}
+            loading={isLoadingData}
+            error={dataError}
+          />
         </div>
 
-        {/* Chart 3 — Expense breakdown for selected month */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Gastos por categoría — {selectedMonth}</h2>
           <ExpensePieChart
@@ -400,7 +348,6 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Chart 4 — People comparison for selected month */}
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Comparación por persona — {selectedMonth}</h2>
           <PeopleComparisonChart
@@ -417,7 +364,7 @@ export default function Dashboard() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles (inline — avoids extra CSS files for a learning project)
+// Styles
 // ---------------------------------------------------------------------------
 
 const styles = {
@@ -425,7 +372,7 @@ const styles = {
     padding: "24px",
     fontFamily: "system-ui, sans-serif",
     backgroundColor: "#f9fafb",
-    minHeight: "100vh",
+    minHeight: "100%",
   },
   header: {
     display: "flex",

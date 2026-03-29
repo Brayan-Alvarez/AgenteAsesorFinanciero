@@ -17,12 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { sendMessage } from "../api/client";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const GREETING = "¡Hola! Soy tu asesor financiero personal. ¿En qué te puedo ayudar hoy?";
+import { useAppContext } from "../context/AppContext";
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -82,10 +77,8 @@ function TypingIndicator() {
 // ---------------------------------------------------------------------------
 
 export default function Chat() {
-  // Conversation history: array of { role, text } objects.
-  const [messages, setMessages] = useState([
-    { role: "agent", text: GREETING },
-  ]);
+  // chatHistory lives in AppContext so it persists when navigating away and back.
+  const { chatHistory, setChatHistory } = useAppContext();
 
   const [input, setInput]     = useState("");
   const [loading, setLoading] = useState(false);
@@ -95,15 +88,15 @@ export default function Chat() {
   // can call scrollIntoView() whenever new messages arrive.
   const bottomRef = useRef(null);
 
-  // Auto-scroll to the latest message every time the messages array or the
+  // Auto-scroll to the latest message every time the history or the
   // loading state changes (loading adds/removes the typing indicator).
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [chatHistory, loading]);
 
-  /** Append a message object to the conversation history. */
+  /** Append a message object to the conversation history in context. */
   const addMessage = (role, text) => {
-    setMessages((prev) => [...prev, { role, text }]);
+    setChatHistory((prev) => [...prev, { role, text }]);
   };
 
   /** Handle form submission (button click or Enter key). */
@@ -149,7 +142,7 @@ export default function Chat() {
 
       {/* Message list */}
       <div style={styles.messageList}>
-        {messages.map((msg, i) => (
+        {chatHistory.map((msg, i) => (
           <MessageBubble key={i} role={msg.role} text={msg.text} />
         ))}
 
