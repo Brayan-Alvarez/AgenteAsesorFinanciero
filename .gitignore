@@ -4,6 +4,7 @@
 
 # --- Secrets & credentials (NEVER commit these) ---
 .env
+frontend/.env
 credentials/
 
 # --- Python cache ---
@@ -42,3 +43,7 @@ build/
 
 # --- Streamlit ---
 .streamlit/secrets.toml
+
+# --- React / Node ---
+frontend/node_modules/
+frontend/dist/
