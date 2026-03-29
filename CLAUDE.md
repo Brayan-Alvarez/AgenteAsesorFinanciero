@@ -206,21 +206,32 @@ Work through these phases in order. Do not skip ahead.
 - [x] Write basic tests in `tests/test_loader.py`
 
 ### Phase 2 — LangGraph Agent
-- [ ] Implement `agent/llm_factory.py`
-- [ ] Implement `agent/tools.py`
-- [ ] Implement `agent/prompts.py`
-- [ ] Implement `agent/graph.py` (StateGraph)
-- [ ] Test conversational flow in terminal
+- [x] Implement `agent/llm_factory.py`
+- [x] Implement `agent/tools.py`
+- [x] Implement `agent/prompts.py`
+- [x] Implement `agent/graph.py` (StateGraph)
+- [x] Test conversational flow in terminal
 
-### Phase 3 — Streamlit UI
-- [ ] `ui/app.py` — entry point and session state
-- [ ] `ui/chat.py` — chat component
-- [ ] `ui/dashboard.py` — Plotly charts
+### Phase 3 — FastAPI Backend ← CURRENT
+- [ ] api/main.py — FastAPI app with CORS
+- [ ] api/models.py — Pydantic models
+- [ ] api/routes/chat.py — POST /api/chat
+- [ ] api/routes/dashboard.py — dashboard endpoints
+- [ ] Test all endpoints with curl before starting frontend
 
-### Phase 4 — Deploy
-- [ ] Deploy to Streamlit Cloud
-- [ ] Configure `st.secrets` for production
-- [ ] Add basic password protection
+### Phase 4 — React Frontend
+- [ ] Bootstrap Vite + React in frontend/
+- [ ] src/api/client.js — centralized API calls
+- [ ] Dashboard.jsx — 4 charts with Recharts
+- [ ] Chat.jsx — conversation UI
+- [ ] NavBar.jsx + MetricCard.jsx — shared components
+
+### Phase 5 — Deploy
+- [ ] FastAPI → Railway or Render (free tier)
+- [ ] React → Vercel (free tier)
+- [ ] Environment variables in each platform's dashboard
+- [ ] Update CORS with production frontend URL
+- [ ] Basic authentication (simple JWT or shared password)
 
 ---
 
