@@ -1,121 +1,119 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+/**
+ * App.jsx — Root component with React Router navigation.
+ *
+ * Routes:
+ *   /       → Dashboard (charts)
+ *   /chat   → Chat (conversational agent)
+ *
+ * A NavBar at the top persists across all routes and highlights the active link.
+ */
 
-function App() {
-  const [count, setCount] = useState(0)
+import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 
+import Chat from "./pages/Chat";
+import Dashboard from "./pages/Dashboard";
+
+// ---------------------------------------------------------------------------
+// NavBar
+// ---------------------------------------------------------------------------
+
+function NavBar() {
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+    <nav style={styles.nav}>
+      <span style={styles.brand}>💰 Asesor Financiero</span>
+
+      <div style={styles.links}>
+        {/* NavLink provides an `isActive` boolean we use to swap styles */}
+        <NavLink
+          to="/"
+          end                          // "end" prevents / matching all nested routes
+          style={({ isActive }) => ({
+            ...styles.link,
+            ...(isActive ? styles.linkActive : {}),
+          })}
         >
-          Count is {count}
-        </button>
-      </section>
+          📊 Dashboard
+        </NavLink>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        <NavLink
+          to="/chat"
+          style={({ isActive }) => ({
+            ...styles.link,
+            ...(isActive ? styles.linkActive : {}),
+          })}
+        >
+          💬 Chat
+        </NavLink>
+      </div>
+    </nav>
+  );
 }
 
-export default App
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      {/* NavBar rendered outside <Routes> so it stays on every page */}
+      <NavBar />
+
+      {/* Page content fills the remaining viewport height */}
+      <main style={styles.main}>
+        <Routes>
+          <Route path="/"     element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
+        </Routes>
+      </main>
+    </BrowserRouter>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
+const styles = {
+  nav: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "0 24px",
+    height: "56px",
+    backgroundColor: "#fff",
+    borderBottom: "1px solid #e5e7eb",
+    position: "sticky",
+    top: 0,
+    zIndex: 100,                       // Stay above chart tooltips and content
+  },
+  brand: {
+    fontWeight: 700,
+    fontSize: "1.05rem",
+    color: "#111827",
+    letterSpacing: "-0.01em",
+  },
+  links: {
+    display: "flex",
+    gap: "8px",
+  },
+  link: {
+    padding: "6px 14px",
+    borderRadius: "8px",
+    textDecoration: "none",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+    color: "#6b7280",
+    transition: "background-color 0.15s, color 0.15s",
+  },
+  linkActive: {
+    backgroundColor: "#ede9fe",        // Light indigo background
+    color: "#4f46e5",                  // Indigo text — matches the chart/button palette
+  },
+  main: {
+    // Chat needs the full remaining height so its flex column fills the screen.
+    // Dashboard just grows with content.
+    height: "calc(100vh - 56px)",
+    overflow: "auto",
+  },
+};
