@@ -1,17 +1,19 @@
-import { USERS } from '../data/categories.js';
+import { useAppContext } from '../context/AppContext.jsx';
 import Avatar from './Avatar.jsx';
 
 export default function UserToggle({ value, onChange }) {
+  const { users } = useAppContext();
+
+  // Build options: "Conjunto" first, then one per user
   const opts = [
-    { id: 'all',     label: 'Conjunto' },
-    { id: 'belmont', label: 'Belmont'  },
-    { id: 'sofi',    label: 'Sofi'     },
+    { id: 'all', label: 'Conjunto' },
+    ...users.map(u => ({ id: u.id, label: u.name })),
   ];
 
   return (
     <div className="seg">
       {opts.map(o => {
-        const user = USERS.find(u => u.id === o.id);
+        const user = users.find(u => u.id === o.id);
         return (
           <button
             key={o.id}
@@ -20,8 +22,11 @@ export default function UserToggle({ value, onChange }) {
           >
             {o.id === 'all' ? (
               <span style={{ display: 'inline-flex' }}>
-                <Avatar user={USERS[0]} />
-                <span style={{ marginLeft: -6 }}><Avatar user={USERS[1]} /></span>
+                {users.slice(0, 2).map((u, i) => (
+                  <span key={u.id} style={{ marginLeft: i > 0 ? -6 : 0 }}>
+                    <Avatar user={u} />
+                  </span>
+                ))}
               </span>
             ) : (
               <Avatar user={user} />

@@ -25,7 +25,7 @@ export default function Budget() {
   const { transactions, budget, userFilter, setUserFilter, updateBudget } = useAppContext();
 
   const [view, setView] = useState('category');
-  const [year, setYear] = useState(2026);
+  const [year, setYear] = useState(new Date().getFullYear());
 
   const userMultiplier = userFilter === 'all' ? 2 : 1;
 

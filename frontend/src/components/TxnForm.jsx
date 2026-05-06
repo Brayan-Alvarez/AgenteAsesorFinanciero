@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { CATEGORIES, USERS } from '../data/categories.js';
+import { CATEGORIES } from '../data/categories.js';
+import { useAppContext } from '../context/AppContext.jsx';
 import Avatar from './Avatar.jsx';
 
 export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
+  const { users } = useAppContext();
+  const defaultUserId = users[0]?.id ?? 'belmont';
+
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState(initial ?? {
-    userId: 'belmont',
+    userId: defaultUserId,
     date: today,
     desc: '',
     category: 'almuerzos',
@@ -35,7 +39,7 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
         <div className="field">
           <label className="field-label">Usuario</label>
           <div style={{ display: 'flex', gap: 8 }}>
-            {USERS.map(u => (
+            {users.map(u => (
               <button
                 key={u.id}
                 type="button"

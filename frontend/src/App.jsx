@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 
 import { AppProvider, useAppContext } from './context/AppContext.jsx';
-import { USERS } from './data/categories.js';
 import Avatar from './components/Avatar.jsx';
 import Modal from './components/Modal.jsx';
 import TxnForm from './components/TxnForm.jsx';
@@ -49,6 +48,8 @@ const NAV = [
 // ---------------------------------------------------------------------------
 
 function Sidebar() {
+  const { users } = useAppContext();
+
   return (
     <aside className="sidebar">
       {/* Brand */}
@@ -56,7 +57,9 @@ function Sidebar() {
         <div className="brand-mark">$</div>
         <div>
           <div className="brand-name">Finanzas</div>
-          <div className="brand-sub">Belmont &amp; Sofi</div>
+          <div className="brand-sub">
+            {users.length > 0 ? users.map(u => u.name).join(' & ') : 'Cargando…'}
+          </div>
         </div>
       </div>
 
@@ -75,18 +78,20 @@ function Sidebar() {
 
       <div className="nav-divider" />
 
-      {/* User list */}
-      <div style={{ padding: '4px 10px' }}>
-        <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-          Usuarios
-        </div>
-        {USERS.map(u => (
-          <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
-            <Avatar user={u} size="lg" />
-            <span style={{ fontSize: 14, fontWeight: 500 }}>{u.name}</span>
+      {/* Dynamic user list */}
+      {users.length > 0 && (
+        <div style={{ padding: '4px 10px' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+            Usuarios
           </div>
-        ))}
-      </div>
+          {users.map(u => (
+            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+              <Avatar user={u} size="lg" />
+              <span style={{ fontSize: 14, fontWeight: 500 }}>{u.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </aside>
   );
 }

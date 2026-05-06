@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
-import { CATEGORIES, getCat, getUser } from '../data/categories.js';
+import { CATEGORIES, getCat } from '../data/categories.js';
 import { filterTxns } from '../data/seed.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -18,10 +18,11 @@ const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','
 const DAYS_SHORT   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 
 export default function Transactions({ openTxnForm }) {
-  const { transactions, userFilter, setUserFilter } = useAppContext();
+  const { transactions, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
 
-  const [year,      setYear]      = useState(2026);
-  const [month,     setMonth]     = useState(5);
+  const now = new Date();
+  const [year,      setYear]      = useState(now.getFullYear());
+  const [month,     setMonth]     = useState(now.getMonth() + 1);
   const [search,    setSearch]    = useState('');
   const [catFilter, setCatFilter] = useState('all');
 
@@ -41,6 +42,16 @@ export default function Transactions({ openTxnForm }) {
     txns.forEach(t => { (g[t.date] = g[t.date] || []).push(t); });
     return Object.entries(g).sort((a, b) => b[0].localeCompare(a[0]));
   }, [txns]);
+
+  if (isLoadingTxns) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-dim)', flexDirection: 'column', gap: 16 }}>
+        <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', animation: 'spin 0.8s linear infinite' }} />
+        <span>Cargando transacciones…</span>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <div>

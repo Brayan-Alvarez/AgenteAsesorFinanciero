@@ -14,9 +14,11 @@ Data loading strategy (same as agent/tools.py):
 """
 
 import logging
+import os
 from typing import Optional
 
 import data.cache as cache
+import pandas as pd
 from data.data_processor import (
     get_budget_summary as _get_budget_summary,
     get_expenses_by_month as _get_expenses_by_month,
@@ -31,8 +33,15 @@ from api.models import (
     ExpenseItem,
     ExpensesResponse,
     MonthTotal,
+    PersonaItem,
+    PersonasResponse,
+    TransactionItem,
+    TransactionsResponse,
     TrendResponse,
 )
+
+# Category labels that signal an income row (case-insensitive substring match).
+_INCOME_KEYWORDS = {"ingreso", "salario", "sueldo", "honorario", "nómina"}
 
 logger = logging.getLogger(__name__)
 
@@ -155,3 +164,95 @@ async def trend() -> TrendResponse:
         raise HTTPException(status_code=500, detail="Could not load trend data.") from exc
 
     return TrendResponse(trend=[MonthTotal(**item) for item in monthly_data])
+
+
+# ---------------------------------------------------------------------------
+# GET /api/transactions
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/transactions",
+    response_model=TransactionsResponse,
+    summary="Individual expense rows from Google Sheets",
+)
+async def transactions(
+    month: Optional[str] = Query(None, description="Spanish month name (e.g. 'Mayo'). Omit for all months."),
+    person: Optional[str] = Query(None, description="Person name matching tab headers. Omit for all people."),
+) -> TransactionsResponse:
+    """
+    Return every individual transaction row from the expense sheets.
+
+    Each row in the sheets becomes one TransactionItem.  The `tipo` field is
+    inferred from the category label: rows whose category contains income-
+    related keywords ('ingreso', 'salario', etc.) are marked 'ingreso';
+    everything else is 'gasto'.
+
+    Optionally filter by `month` and/or `person` to reduce payload size.
+    """
+    try:
+        _, expenses_df = _get_dataframes()
+    except Exception as exc:
+        logger.exception("GET /api/transactions — failed to load expenses.")
+        raise HTTPException(status_code=500, detail="Could not load transaction data.") from exc
+
+    if expenses_df.empty:
+        return TransactionsResponse(transactions=[])
+
+    df = expenses_df.copy()
+
+    if month:
+        df = df[df["Mes"] == month]
+    if person:
+        df = df[df["Persona"] == person]
+
+    items: list[TransactionItem] = []
+    for idx, row in df.iterrows():
+        cat_lower = str(row.get("Categoría", "")).lower()
+        tipo = "ingreso" if any(kw in cat_lower for kw in _INCOME_KEYWORDS) else "gasto"
+
+        fecha = row.get("Fecha")
+        if pd.isna(fecha):
+            fecha_str = ""
+        else:
+            fecha_str = pd.Timestamp(fecha).strftime("%Y-%m-%d")
+
+        items.append(TransactionItem(
+            id=int(idx) + 1,
+            fecha=fecha_str,
+            categoria=str(row.get("Categoría", "")),
+            descripcion=str(row.get("Descripción", "")),
+            monto=int(row.get("Monto", 0)),
+            persona=str(row.get("Persona", "")),
+            mes=str(row.get("Mes", "")),
+            tipo=tipo,
+        ))
+
+    logger.info("GET /api/transactions: returning %d rows (month=%r, person=%r).", len(items), month, person)
+    return TransactionsResponse(transactions=items)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/personas
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/personas",
+    response_model=PersonasResponse,
+    summary="List of persons tracked in the household",
+)
+async def personas() -> PersonasResponse:
+    """
+    Return the list of people configured via the PERSON_NAMES environment variable.
+
+    Each entry has a display `nombre` (as it appears in the sheet tab headers)
+    and a URL-safe `id` (lowercase of the name) for use as a filter key in the
+    frontend.
+    """
+    raw = os.getenv("PERSON_NAMES", "")
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+
+    items = [
+        PersonaItem(id=name.lower(), nombre=name)
+        for name in names
+    ]
+    return PersonasResponse(personas=items)

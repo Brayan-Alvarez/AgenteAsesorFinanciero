@@ -105,3 +105,48 @@ export async function getTrend() {
     );
   }
 }
+
+/**
+ * Fetch all individual transaction rows from Google Sheets.
+ *
+ * Optionally filter by month and/or person to reduce the payload.
+ * The `tipo` field is 'ingreso' or 'gasto'; `fecha` is 'YYYY-MM-DD'.
+ *
+ * @param {string|null} month  - Spanish month name, e.g. "Mayo". Null for all months.
+ * @param {string|null} person - Person name as in tab headers. Null for all people.
+ * @returns {Promise<{ transactions: Array<{ id, fecha, categoria, descripcion, monto, persona, mes, tipo }> }>}
+ * @throws {Error} If the request fails or the server returns an error.
+ */
+export async function getTransactions(month = null, person = null) {
+  try {
+    const params = {};
+    if (month)  params.month  = month;
+    if (person) params.person = person;
+    const response = await api.get("/api/transactions", { params });
+    return response.data;
+  } catch (error) {
+    throw new Error(
+      error.response?.data?.detail ?? "No se pudieron cargar las transacciones."
+    );
+  }
+}
+
+/**
+ * Fetch the list of persons tracked in the household.
+ *
+ * Returns display names (as in sheet tab headers) and their lowercase IDs
+ * for use as filter keys in the frontend.
+ *
+ * @returns {Promise<{ personas: Array<{ id: string, nombre: string }> }>}
+ * @throws {Error} If the request fails or the server returns an error.
+ */
+export async function getPersonas() {
+  try {
+    const response = await api.get("/api/personas");
+    return response.data;
+  } catch (error) {
+    throw new Error(
+      error.response?.data?.detail ?? "No se pudieron cargar los usuarios."
+    );
+  }
+}

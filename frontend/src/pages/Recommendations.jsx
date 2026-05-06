@@ -22,8 +22,9 @@ const MONTHS_LONG = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','A
 export default function Recommendations() {
   const { transactions, budget, userFilter, setUserFilter } = useAppContext();
 
-  const [year,  setYear]  = useState(2026);
-  const [month, setMonth] = useState(5);
+  const now = new Date();
+  const [year,  setYear]  = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
 
   const userMultiplier = userFilter === 'all' ? 2 : 1;
 
@@ -51,9 +52,9 @@ export default function Recommendations() {
   const prevExpense = prevTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
 
   // Days
-  const now        = new Date();
+  const today       = new Date();
   const daysInMonth = new Date(year, month, 0).getDate();
-  const dayOfMonth  = (now.getMonth() + 1 === month && now.getFullYear() === year) ? now.getDate() : 28;
+  const dayOfMonth  = (today.getMonth() + 1 === month && today.getFullYear() === year) ? today.getDate() : 28;
   const projected   = (expense / Math.max(dayOfMonth, 1)) * daysInMonth;
   const savingsRate = income > 0 ? (savings / income) * 100 : 0;
 

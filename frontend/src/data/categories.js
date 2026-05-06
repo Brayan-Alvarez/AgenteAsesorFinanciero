@@ -27,5 +27,28 @@ export const USERS = [
   { id: 'sofi',    name: 'Sofi',    avatar: 'S', color: '#ec4899' },
 ];
 
-export const getCat  = (id) => CATEGORIES.find(c => c.id === id) ?? CATEGORIES.find(c => c.id === 'otros');
+const OTROS = () => CATEGORIES.find(c => c.id === 'otros');
+
+/**
+ * Look up a category by its short ID (e.g. 'almuerzos') or by the full Spanish
+ * label as it appears in the Google Sheet (e.g. 'Almuerzos normales').
+ *
+ * The ID path is the fast path for seed/hardcoded usage.
+ * The label path handles real sheet data where the exact label string is returned.
+ * Unknown labels fall back to the 'otros' category but preserve the original label
+ * so it still displays correctly in the UI.
+ */
+export const getCat = (idOrLabel) => {
+  if (!idOrLabel) return OTROS();
+  // Fast path: exact ID match (used by existing hardcoded references)
+  const byId = CATEGORIES.find(c => c.id === idOrLabel);
+  if (byId) return byId;
+  // Slow path: case-insensitive label match for real sheet category names
+  const normalized = String(idOrLabel).trim().toLowerCase();
+  const byLabel = CATEGORIES.find(c => c.label.toLowerCase() === normalized);
+  if (byLabel) return byLabel;
+  // Fallback: unknown category — use 'otros' style but keep the real label
+  return { ...OTROS(), id: idOrLabel, label: String(idOrLabel) };
+};
+
 export const getUser = (id) => USERS.find(u => u.id === id);

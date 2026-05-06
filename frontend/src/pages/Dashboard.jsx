@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, PiggyBank, Plus, Sparkles, TrendingUp } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
-import { CATEGORIES, getCat, getUser } from '../data/categories.js';
+import { CATEGORIES, getCat } from '../data/categories.js';
 import { filterTxns } from '../data/seed.js';
 import Avatar from '../components/Avatar.jsx';
 import CatChip from '../components/CatChip.jsx';
@@ -43,11 +43,11 @@ const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','
 // ---------------------------------------------------------------------------
 
 export default function Dashboard({ openTxnForm }) {
-  const { transactions, budget, userFilter, setUserFilter } = useAppContext();
+  const { transactions, budget, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
 
   const now = new Date();
-  const [year,  setYear]  = useState(2026);
-  const [month, setMonth] = useState(5); // Mayo — matches seed data
+  const [year,  setYear]  = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
 
   const userMultiplier = userFilter === 'all' ? 2 : 1;
 
@@ -170,6 +170,16 @@ export default function Dashboard({ openTxnForm }) {
   }, [catVsBudget, expenseTotal, budgetTotal, expenseDelta, prevExpense, prevMonth, spendByCat, today, daysInMonth]);
 
   const recent = txnsMonth.slice(0, 6);
+
+  if (isLoadingTxns) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-dim)', flexDirection: 'column', gap: 16 }}>
+        <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', animation: 'spin 0.8s linear infinite' }} />
+        <span>Cargando datos desde Google Sheets…</span>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <div>

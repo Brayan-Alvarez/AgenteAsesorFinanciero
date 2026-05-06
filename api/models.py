@@ -104,3 +104,46 @@ class TrendResponse(BaseModel):
     """Month-by-month spending for the current year in calendar order."""
 
     trend: list[MonthTotal]
+
+
+# ---------------------------------------------------------------------------
+# Individual transactions  (GET /api/transactions)
+# ---------------------------------------------------------------------------
+
+class TransactionItem(BaseModel):
+    """A single expense or income row from the Google Sheets expense tabs."""
+
+    id: int = Field(..., description="Stable row index (1-based) used as a unique key.")
+    fecha: str = Field(..., description="Transaction date in ISO format YYYY-MM-DD.")
+    categoria: str = Field(..., description="Category label exactly as written in the sheet.")
+    descripcion: str = Field(..., description="Free-text description of the transaction.")
+    monto: int = Field(..., description="Amount in COP (always a positive integer).")
+    persona: str = Field(..., description="Person name as it appears in the tab header.")
+    mes: str = Field(..., description="Spanish month name derived from the tab name.")
+    tipo: str = Field(
+        ...,
+        description="'ingreso' for income rows, 'gasto' for all other expenses.",
+    )
+
+
+class TransactionsResponse(BaseModel):
+    """All individual transactions from the expenses sheet."""
+
+    transactions: list[TransactionItem]
+
+
+# ---------------------------------------------------------------------------
+# Personas  (GET /api/personas)
+# ---------------------------------------------------------------------------
+
+class PersonaItem(BaseModel):
+    """A single user / person tracked in the household."""
+
+    id: str = Field(..., description="URL-safe identifier: lowercase name.")
+    nombre: str = Field(..., description="Display name as it appears in the sheet tabs.")
+
+
+class PersonasResponse(BaseModel):
+    """All persons configured via the PERSON_NAMES environment variable."""
+
+    personas: list[PersonaItem]
