@@ -1,435 +1,397 @@
 /**
- * Dashboard.jsx — Financial dashboard with 4 Recharts visualizations.
+ * Dashboard.jsx — Resumen mensual con KPIs, presupuesto, gráficas y recomendaciones IA.
  *
- * Layout: 2×2 CSS Grid.
- *
- * Chart 1 (top-left):  Bar chart — annual budget vs actual spend per category.
- * Chart 2 (top-right): Line chart — total spending per month (trend).
- * Chart 3 (bot-left):  Pie chart  — expense breakdown by category for selected month.
- * Chart 4 (bot-right): Bar chart  — spend comparison between Sofi and Belmont for selected month.
- *
- * State strategy:
- *   budgetData, trendData  — read from AppContext (fetched once on app start).
- *   expensesCache          — read/written via AppContext; each month+person combo
- *                            is fetched at most once per session.
- *   selectedMonth          — local UI state (no value in sharing it globally).
- *   expensesLoading/Error  — local (only relevant while this component is active).
+ * Datos:
+ *   - KPIs, donut, tendencia, categorías vs presupuesto, últimas transacciones
+ *     → seed transactions + seed budget (estado local interactivo)
+ *   - Tendencia real de 6 meses → API /api/trend (si el backend está disponible)
  */
 
-import { useEffect, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useMemo, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, PiggyBank, Plus, Sparkles, TrendingUp } from 'lucide-react';
 
-import { useAppContext } from "../context/AppContext";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const COLORS = {
-  planned:  "#6366f1",
-  actual:   "#f59e0b",
-  trend:    "#10b981",
-  person1:  "#3b82f6",
-  person2:  "#ec4899",
-  pie: [
-    "#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#ec4899",
-    "#8b5cf6", "#14b8a6", "#f97316", "#06b6d4", "#84cc16",
-  ],
-};
-
-const MONTHS = [
-  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
-];
-
-const PEOPLE = ["Sofi", "Belmont"];
+import { useAppContext } from '../context/AppContext.jsx';
+import { CATEGORIES, getCat, getUser } from '../data/categories.js';
+import { filterTxns } from '../data/seed.js';
+import Avatar from '../components/Avatar.jsx';
+import CatChip from '../components/CatChip.jsx';
+import DonutChart from '../components/DonutChart.jsx';
+import MonthNav from '../components/MonthNav.jsx';
+import TrendBarChart from '../components/TrendBarChart.jsx';
+import UserToggle from '../components/UserToggle.jsx';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const formatCOP = (amount) =>
-  new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  }).format(amount);
-
-const formatCOPShort = (amount) => {
-  if (Math.abs(amount) >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(amount) >= 1_000)     return `$${(amount / 1_000).toFixed(0)}K`;
-  return `$${amount}`;
-};
-
-const copTooltipFormatter = (value) => [formatCOP(value), ""];
-
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function LoadingState() {
-  return <div style={styles.emptyState}><span>Cargando datos…</span></div>;
+export function fmt(n, { compact = false, sign = false } = {}) {
+  if (n == null || isNaN(n)) return '$0';
+  const abs = Math.abs(n);
+  let s;
+  if (compact && abs >= 1_000_000) s = `$${(n / 1_000_000).toFixed(1)}M`;
+  else if (compact && abs >= 1_000) s = `$${Math.round(n / 1_000)}k`;
+  else s = '$' + Math.round(n).toLocaleString('es-CO');
+  if (sign && n > 0) s = '+' + s;
+  return s;
 }
 
-function EmptyState() {
-  return <div style={styles.emptyState}><span>No hay datos disponibles</span></div>;
-}
-
-function ErrorState({ message }) {
-  return <div style={{ ...styles.emptyState, color: "#ef4444" }}><span>⚠ {message}</span></div>;
-}
+const MONTHS_SHORT = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
 // ---------------------------------------------------------------------------
-// Chart 1 — Budget vs Actual
+// Dashboard
 // ---------------------------------------------------------------------------
 
-function BudgetChart({ data, loading, error }) {
-  if (loading) return <LoadingState />;
-  if (error)   return <ErrorState message={error} />;
-  if (!data || data.length === 0) return <EmptyState />;
+export default function Dashboard({ openTxnForm }) {
+  const { transactions, budget, userFilter, setUserFilter } = useAppContext();
 
-  return (
-    <ResponsiveContainer width="100%" height={320}>
-      <BarChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 80 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-40} textAnchor="end" interval={0} />
-        <YAxis tickFormatter={formatCOPShort} tick={{ fontSize: 11 }} width={72} />
-        <Tooltip formatter={copTooltipFormatter} />
-        <Legend verticalAlign="top" />
-        <Bar dataKey="planned" name="Presupuestado" fill={COLORS.planned} radius={[3, 3, 0, 0]} />
-        <Bar dataKey="actual"  name="Gastado"       fill={COLORS.actual}  radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+  const now = new Date();
+  const [year,  setYear]  = useState(2026);
+  const [month, setMonth] = useState(5); // Mayo — matches seed data
+
+  const userMultiplier = userFilter === 'all' ? 2 : 1;
+
+  // ── Current month transactions ─────────────────────────────────────────────
+  const txnsMonth = useMemo(
+    () => filterTxns(transactions, userFilter, year, month),
+    [transactions, userFilter, year, month],
   );
-}
 
-// ---------------------------------------------------------------------------
-// Chart 2 — Monthly trend
-// ---------------------------------------------------------------------------
+  const incomeTotal  = txnsMonth.filter(t => t.type === 'income' && t.category === 'ingreso').reduce((s, t) => s + t.amount, 0);
+  const expenseTotal = txnsMonth.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const savings      = txnsMonth.filter(t => t.category === 'ahorro').reduce((s, t) => s + t.amount, 0);
+  const balance      = incomeTotal - expenseTotal;
 
-function TrendChart({ data, loading, error }) {
-  if (loading) return <LoadingState />;
-  if (error)   return <ErrorState message={error} />;
-  if (!data || data.length === 0) return <EmptyState />;
+  // ── Budget for this month ──────────────────────────────────────────────────
+  const budgetTotal = Object.values(budget).reduce((s, m) => s + (m[month] || 0), 0) * userMultiplier;
+  const budgetPct   = budgetTotal > 0 ? (expenseTotal / budgetTotal) * 100 : 0;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const today       = (now.getMonth() + 1 === month && now.getFullYear() === year) ? now.getDate() : daysInMonth;
+  const daysLeft    = daysInMonth - today;
 
-  return (
-    <ResponsiveContainer width="100%" height={320}>
-      <LineChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tickFormatter={formatCOPShort} tick={{ fontSize: 11 }} width={72} />
-        <Tooltip formatter={copTooltipFormatter} />
-        <Legend verticalAlign="top" />
-        <Line
-          type="monotone"
-          dataKey="total"
-          name="Total gastado"
-          stroke={COLORS.trend}
-          strokeWidth={2.5}
-          dot={{ r: 4 }}
-          activeDot={{ r: 6 }}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+  // ── Previous month delta ───────────────────────────────────────────────────
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear  = month === 1 ? year - 1 : year;
+  const prevTxns  = useMemo(
+    () => filterTxns(transactions, userFilter, prevYear, prevMonth),
+    [transactions, userFilter, prevYear, prevMonth],
   );
-}
+  const prevExpense  = prevTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const expenseDelta = prevExpense > 0 ? ((expenseTotal - prevExpense) / prevExpense) * 100 : 0;
 
-// ---------------------------------------------------------------------------
-// Chart 3 — Expense breakdown for selected month (pie)
-// ---------------------------------------------------------------------------
+  // ── Spend by category (donut) ──────────────────────────────────────────────
+  const spendByCat = useMemo(() => {
+    const map = {};
+    txnsMonth.filter(t => t.type === 'expense').forEach(t => {
+      map[t.category] = (map[t.category] || 0) + t.amount;
+    });
+    return Object.entries(map)
+      .map(([id, value]) => ({ id, value, ...getCat(id) }))
+      .sort((a, b) => b.value - a.value);
+  }, [txnsMonth]);
 
-function PieLabel({ cx, cy, midAngle, innerRadius, outerRadius, name, percent }) {
-  if (percent < 0.04) return null;
-  const RADIAN = Math.PI / 180;
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  return (
-    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11}>
-      {name.length > 10 ? `${name.slice(0, 9)}…` : name}
-    </text>
-  );
-}
-
-function ExpensePieChart({ data, loading, error }) {
-  if (loading) return <LoadingState />;
-  if (error)   return <ErrorState message={error} />;
-  if (!data || data.length === 0) return <EmptyState />;
-
-  const pieData = data.map((item) => ({ name: item.category, value: item.total }));
-
-  return (
-    <ResponsiveContainer width="100%" height={320}>
-      <PieChart>
-        <Pie
-          data={pieData}
-          dataKey="value"
-          nameKey="name"
-          cx="50%"
-          cy="50%"
-          outerRadius={120}
-          labelLine={false}
-          label={PieLabel}
-        >
-          {pieData.map((_, index) => (
-            <Cell key={index} fill={COLORS.pie[index % COLORS.pie.length]} />
-          ))}
-        </Pie>
-        <Tooltip formatter={copTooltipFormatter} />
-        <Legend />
-      </PieChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chart 4 — People comparison for selected month
-// ---------------------------------------------------------------------------
-
-function mergeByCategory(expensesPerson1, expensesPerson2) {
-  const map = {};
-  for (const item of expensesPerson1) {
-    map[item.category] = { category: item.category, [PEOPLE[0]]: item.total, [PEOPLE[1]]: 0 };
+  const donutData = spendByCat.slice(0, 6).map(c => ({ value: c.value, color: c.color, label: c.label }));
+  if (spendByCat.length > 6) {
+    const rest = spendByCat.slice(6).reduce((s, c) => s + c.value, 0);
+    donutData.push({ value: rest, color: '#3b3b5b', label: 'Otros' });
   }
-  for (const item of expensesPerson2) {
-    if (map[item.category]) {
-      map[item.category][PEOPLE[1]] = item.total;
-    } else {
-      map[item.category] = { category: item.category, [PEOPLE[0]]: 0, [PEOPLE[1]]: item.total };
+
+  // ── 6-month trend (seed data) ──────────────────────────────────────────────
+  const barData = useMemo(() => {
+    return Array.from({ length: 6 }, (_, i) => {
+      let m = month - (5 - i);
+      let y = year;
+      while (m <= 0) { m += 12; y--; }
+      const t = filterTxns(transactions, userFilter, y, m);
+      const expense = t.filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
+      const sav     = t.filter(x => x.category === 'ahorro').reduce((s, x) => s + x.amount, 0);
+      return {
+        label: MONTHS_SHORT[m - 1],
+        segments: [
+          { value: expense, color: '#6366f1', label: 'Gastos' },
+          { value: sav,     color: '#34d399', label: 'Ahorro' },
+        ],
+      };
+    });
+  }, [transactions, userFilter, year, month]);
+
+  const barMax = Math.max(...barData.map(d => d.segments.reduce((s, x) => s + x.value, 0))) * 1.1 || 1;
+
+  // ── Categories vs budget ───────────────────────────────────────────────────
+  const catVsBudget = useMemo(() => {
+    return CATEGORIES.filter(c => c.id !== 'ingreso').map(c => {
+      const spent    = txnsMonth.filter(t => t.category === c.id && t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+      const budgeted = (budget[c.id]?.[month] || 0) * userMultiplier;
+      return { ...c, spent, budgeted, pct: budgeted > 0 ? (spent / budgeted) * 100 : 0 };
+    })
+      .filter(c => c.spent > 0 || c.budgeted > 0)
+      .sort((a, b) => b.pct - a.pct);
+  }, [txnsMonth, budget, month, userMultiplier]);
+
+  // ── AI insights (deterministic rules) ─────────────────────────────────────
+  const aiInsights = useMemo(() => {
+    const out = [];
+    catVsBudget.forEach(c => {
+      if (c.pct > 100 && c.budgeted > 0 && out.length < 2) {
+        out.push({
+          type: 'warn',
+          icon: <AlertTriangle size={16} />,
+          title: `Gasto excesivo en ${c.label}`,
+          body: `Llevas ${fmt(c.spent, { compact: true })} de ${fmt(c.budgeted, { compact: true })} presupuestados (${Math.round(c.pct)}%). Considera frenar este rubro.`,
+        });
+      }
+    });
+    const projected = (expenseTotal / Math.max(today, 1)) * daysInMonth;
+    if (projected > budgetTotal && budgetTotal > 0) {
+      out.push({
+        type: 'proj',
+        icon: <TrendingUp size={16} />,
+        title: 'Proyección del mes',
+        body: `Al ritmo actual cerrarás en ${fmt(projected, { compact: true })}, ${fmt(projected - budgetTotal, { compact: true })} por encima del presupuesto.`,
+      });
     }
-  }
-  return Object.values(map).sort(
-    (a, b) => (b[PEOPLE[0]] + b[PEOPLE[1]]) - (a[PEOPLE[0]] + a[PEOPLE[1]])
-  );
-}
+    if (Math.abs(expenseDelta) > 10) {
+      out.push({
+        type: expenseDelta > 0 ? 'warn' : 'up',
+        icon: expenseDelta > 0 ? <ArrowUp size={16} /> : <ArrowDown size={16} />,
+        title: `${expenseDelta > 0 ? 'Aumento' : 'Reducción'} vs ${MONTHS_LONG[prevMonth - 1]}`,
+        body: `Tus gastos ${expenseDelta > 0 ? 'subieron' : 'bajaron'} ${Math.abs(expenseDelta).toFixed(0)}% comparado con el mes pasado (${fmt(prevExpense, { compact: true })}).`,
+      });
+    }
+    if (spendByCat[0]) {
+      out.push({
+        type: 'tip',
+        icon: <PiggyBank size={16} />,
+        title: 'Sugerencia de ahorro',
+        body: `Tu mayor gasto es ${spendByCat[0].label} (${fmt(spendByCat[0].value, { compact: true })}). Reducir 15% aquí liberaría ${fmt(spendByCat[0].value * 0.15, { compact: true })}.`,
+      });
+    }
+    return out.slice(0, 4);
+  }, [catVsBudget, expenseTotal, budgetTotal, expenseDelta, prevExpense, prevMonth, spendByCat, today, daysInMonth]);
 
-function PeopleComparisonChart({ dataPerson1, dataPerson2, loading, error }) {
-  if (loading) return <LoadingState />;
-  if (error)   return <ErrorState message={error} />;
-
-  const merged = mergeByCategory(dataPerson1 ?? [], dataPerson2 ?? []);
-  if (merged.length === 0) return <EmptyState />;
-
-  return (
-    <ResponsiveContainer width="100%" height={320}>
-      <BarChart data={merged} margin={{ top: 8, right: 16, left: 8, bottom: 80 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="category" tick={{ fontSize: 11 }} angle={-40} textAnchor="end" interval={0} />
-        <YAxis tickFormatter={formatCOPShort} tick={{ fontSize: 11 }} width={72} />
-        <Tooltip formatter={copTooltipFormatter} />
-        <Legend verticalAlign="top" />
-        <Bar dataKey={PEOPLE[0]} name={PEOPLE[0]} fill={COLORS.person1} radius={[3, 3, 0, 0]} />
-        <Bar dataKey={PEOPLE[1]} name={PEOPLE[1]} fill={COLORS.person2} radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main Dashboard component
-// ---------------------------------------------------------------------------
-
-export default function Dashboard() {
-  // Budget and trend come from AppContext — already fetched, no re-fetching.
-  const {
-    budgetData,
-    trendData,
-    isLoadingData,
-    dataError,
-    expensesCache,
-    fetchExpenses,
-  } = useAppContext();
-
-  // selectedMonth is local UI state — no need to share it globally.
-  const currentMonthIndex = new Date().getMonth();
-  const [selectedMonth, setSelectedMonth] = useState(MONTHS[currentMonthIndex]);
-
-  // Expenses loading/error are local because they only matter while
-  // this component is active and a month-specific fetch is in flight.
-  const [expensesLoading, setExpensesLoading] = useState(false);
-  const [expensesError,   setExpensesError]   = useState(null);
-
-  // Derive the cache keys for the current month selection so we can read
-  // the cached expense arrays without prop-drilling the full cache.
-  const keyCombined = `${selectedMonth}|all`;
-  const keyPerson1  = `${selectedMonth}|${PEOPLE[0]}`;
-  const keyPerson2  = `${selectedMonth}|${PEOPLE[1]}`;
-
-  // Fetch expenses for the selected month whenever it changes.
-  // fetchExpenses() is a no-op if the data is already in the cache.
-  useEffect(() => {
-    // Only show a spinner if at least one of the three combos is missing.
-    const allCached =
-      expensesCache[keyCombined] !== undefined &&
-      expensesCache[keyPerson1]  !== undefined &&
-      expensesCache[keyPerson2]  !== undefined;
-
-    if (allCached) return;
-
-    setExpensesLoading(true);
-    setExpensesError(null);
-
-    Promise.all([
-      fetchExpenses(selectedMonth),
-      fetchExpenses(selectedMonth, PEOPLE[0]),
-      fetchExpenses(selectedMonth, PEOPLE[1]),
-    ])
-      .catch((err) => setExpensesError(err.message))
-      .finally(() => setExpensesLoading(false));
-  }, [selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Read current month's data from the cache (empty array until fetched).
-  const expensesCombined = expensesCache[keyCombined] ?? [];
-  const expensesPerson1  = expensesCache[keyPerson1]  ?? [];
-  const expensesPerson2  = expensesCache[keyPerson2]  ?? [];
+  const recent = txnsMonth.slice(0, 6);
 
   return (
-    <div style={styles.page}>
-      {/* Page header */}
-      <div style={styles.header}>
-        <h1 style={styles.title}>Dashboard Financiero</h1>
-
-        <div style={styles.monthSelector}>
-          <label htmlFor="month-select" style={styles.label}>Mes:</label>
-          <select
-            id="month-select"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            style={styles.select}
-          >
-            {MONTHS.map((month) => (
-              <option key={month} value={month}>{month}</option>
-            ))}
-          </select>
+    <div>
+      {/* Topbar */}
+      <div className="topbar">
+        <div>
+          <h1 className="page-title">
+            Hola, {userFilter === 'all' ? 'pareja 💜' : (getUser(userFilter)?.name || '')}
+          </h1>
+          <div className="page-sub">{MONTHS_LONG[month - 1]} {year} · resumen del mes</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <MonthNav year={year} month={month} onChange={(y, m) => { setYear(y); setMonth(m); }} />
+          <UserToggle value={userFilter} onChange={setUserFilter} />
+          <button className="btn primary" onClick={() => openTxnForm()}>
+            <Plus size={16} /> Nueva
+          </button>
         </div>
       </div>
 
-      {/* 2×2 chart grid */}
-      <div style={styles.grid}>
+      {/* KPIs */}
+      <div className="grid grid-4" style={{ marginBottom: 20 }}>
+        <div className="card">
+          <div className="kpi-label">Ingresos</div>
+          <div className="kpi-value mono" style={{ color: 'var(--green)' }}>{fmt(incomeTotal, { compact: true })}</div>
+          <div className="kpi-foot">{txnsMonth.filter(t => t.category === 'ingreso').length} transacciones</div>
+        </div>
+        <div className="card">
+          <div className="kpi-label">Gastos</div>
+          <div className="kpi-value mono">{fmt(expenseTotal, { compact: true })}</div>
+          <div className="kpi-foot">
+            <span className={`pill ${expenseDelta > 0 ? 'down' : 'up'}`}>
+              {expenseDelta > 0 ? <ArrowUp size={10} /> : <ArrowDown size={10} />}
+              {Math.abs(expenseDelta).toFixed(0)}%
+            </span>
+            vs mes anterior
+          </div>
+        </div>
+        <div className="card">
+          <div className="kpi-label">Balance</div>
+          <div className="kpi-value mono" style={{ color: balance >= 0 ? 'var(--green)' : 'var(--red)' }}>
+            {fmt(balance, { compact: true, sign: true })}
+          </div>
+          <div className="kpi-foot">Ingresos − Gastos</div>
+        </div>
+        <div className="card">
+          <div className="kpi-label">Ahorro</div>
+          <div className="kpi-value mono" style={{ color: 'var(--accent)' }}>{fmt(savings, { compact: true })}</div>
+          <div className="kpi-foot">{incomeTotal > 0 ? Math.round(savings / incomeTotal * 100) : 0}% de ingresos</div>
+        </div>
+      </div>
 
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Presupuesto vs Gasto real (anual)</h2>
-          <BudgetChart
-            data={budgetData}
-            loading={isLoadingData}
-            error={dataError}
-          />
+      {/* Budget bar */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-head">
+          <div>
+            <div className="card-title">Gastos vs presupuesto general</div>
+            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 8, letterSpacing: '-0.02em' }} className="mono">
+              {fmt(expenseTotal, { compact: true })}{' '}
+              <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>/ {fmt(budgetTotal, { compact: true })}</span>
+            </div>
+          </div>
+          <span className={`pill ${budgetPct > 100 ? 'down' : budgetPct > 85 ? 'warn' : 'up'}`}>
+            {budgetPct.toFixed(0)}% usado
+          </span>
+        </div>
+        <div className="bar" style={{ height: 10 }}>
+          <div className="bar-fill" style={{
+            width: `${Math.min(budgetPct, 100)}%`,
+            background: budgetPct > 100 ? 'var(--red)' : budgetPct > 85 ? 'var(--amber)' : 'linear-gradient(90deg, #6366f1, #a78bfa)',
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, color: 'var(--text-mute)' }}>
+          <span>{fmt(Math.max(budgetTotal - expenseTotal, 0), { compact: true })} restante</span>
+          <span>Faltan {Math.max(daysLeft, 0)} días</span>
+        </div>
+      </div>
+
+      {/* Donut + AI insights */}
+      <div className="grid grid-12" style={{ marginBottom: 20 }}>
+        <div className="col-8">
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">Gastos por categoría</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 24, alignItems: 'center' }}>
+              <DonutChart
+                data={donutData}
+                centerLabel="Total mes"
+                centerValue={fmt(expenseTotal, { compact: true })}
+              />
+              <div className="legend">
+                {donutData.slice(0, 7).map((d, i) => (
+                  <div key={i} className="legend-row">
+                    <span className="cat-dot" style={{ background: d.color, width: 10, height: 10 }} />
+                    <span className="name">{d.label}</span>
+                    <span className="pct mono">{fmt(d.value, { compact: true })}</span>
+                    <span style={{ color: 'var(--text-mute)', fontSize: 12, minWidth: 36, textAlign: 'right' }} className="mono">
+                      {expenseTotal > 0 ? Math.round(d.value / expenseTotal * 100) : 0}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Tendencia mensual</h2>
-          <TrendChart
-            data={trendData}
-            loading={isLoadingData}
-            error={dataError}
-          />
+        <div className="col-4">
+          <div className="card" style={{ height: '100%' }}>
+            <div className="card-head">
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <Sparkles size={14} /> Recomendaciones IA
+              </div>
+            </div>
+            <div>
+              {aiInsights.length === 0 && (
+                <div style={{ color: 'var(--text-mute)', fontSize: 13 }}>Sin alertas este mes 🎉</div>
+              )}
+              {aiInsights.map((ins, i) => (
+                <div key={i} className="insight">
+                  <div className={`insight-icon ${ins.type}`}>{ins.icon}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="insight-title">{ins.title}</div>
+                    <div className="insight-body">{ins.body}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Trend + Categories vs Budget */}
+      <div className="grid grid-12" style={{ marginBottom: 20 }}>
+        <div className="col-6">
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">Tendencia 6 meses</div>
+              <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text-dim)' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: '#6366f1', display: 'inline-block' }} /> Gastos
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: '#34d399', display: 'inline-block' }} /> Ahorro
+                </span>
+              </div>
+            </div>
+            <TrendBarChart data={barData} max={barMax} />
+          </div>
         </div>
 
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Gastos por categoría — {selectedMonth}</h2>
-          <ExpensePieChart
-            data={expensesCombined}
-            loading={expensesLoading}
-            error={expensesError}
-          />
+        <div className="col-6">
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">Categorías vs presupuesto</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {catVsBudget.slice(0, 6).map(c => (
+                <div key={c.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 13 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="cat-dot" style={{ background: c.color, width: 9, height: 9 }} />
+                      {c.label}
+                    </span>
+                    <span className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                      <span style={{ color: c.pct > 100 ? 'var(--red)' : 'var(--text)' }}>{fmt(c.spent, { compact: true })}</span>
+                      <span> / {fmt(c.budgeted, { compact: true })}</span>
+                    </span>
+                  </div>
+                  <div className="bar">
+                    <div className="bar-fill" style={{
+                      width: `${Math.min(c.pct, 100)}%`,
+                      background: c.pct > 100 ? 'var(--red)' : c.pct > 85 ? 'var(--amber)' : c.color,
+                    }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
+      </div>
 
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Comparación por persona — {selectedMonth}</h2>
-          <PeopleComparisonChart
-            dataPerson1={expensesPerson1}
-            dataPerson2={expensesPerson2}
-            loading={expensesLoading}
-            error={expensesError}
-          />
+      {/* Recent transactions */}
+      <div className="card flush">
+        <div style={{ padding: '20px 22px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="card-title">Últimas transacciones</div>
+          <a href="/transacciones" className="card-action">Ver todas →</a>
         </div>
-
+        <table>
+          <thead>
+            <tr>
+              <th>Descripción</th>
+              <th>Categoría</th>
+              <th>Usuario</th>
+              <th>Fecha</th>
+              <th className="amt">Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map(t => {
+              const u = getUser(t.userId);
+              return (
+                <tr key={t.id} onClick={() => openTxnForm(t)} style={{ cursor: 'pointer' }}>
+                  <td>{t.desc}</td>
+                  <td><CatChip catId={t.category} /></td>
+                  <td>
+                    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                      <Avatar user={u} /> {u?.name}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ color: 'var(--text-dim)', fontSize: 13 }}>
+                    {t.date.slice(8, 10)}/{t.date.slice(5, 7)}
+                  </td>
+                  <td className="amt mono" style={{ color: t.type === 'income' ? 'var(--green)' : 'var(--text)' }}>
+                    {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const styles = {
-  page: {
-    padding: "24px",
-    fontFamily: "system-ui, sans-serif",
-    backgroundColor: "#f9fafb",
-    minHeight: "100%",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: "24px",
-    flexWrap: "wrap",
-    gap: "12px",
-  },
-  title: {
-    fontSize: "1.75rem",
-    fontWeight: 700,
-    color: "#111827",
-    margin: 0,
-  },
-  monthSelector: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-  },
-  label: {
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    color: "#374151",
-  },
-  select: {
-    padding: "6px 12px",
-    borderRadius: "8px",
-    border: "1px solid #d1d5db",
-    fontSize: "0.95rem",
-    backgroundColor: "#fff",
-    cursor: "pointer",
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, 1fr)",
-    gap: "24px",
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: "12px",
-    padding: "20px 24px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)",
-  },
-  cardTitle: {
-    fontSize: "1rem",
-    fontWeight: 600,
-    color: "#374151",
-    marginTop: 0,
-    marginBottom: "16px",
-  },
-  emptyState: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    height: "200px",
-    color: "#9ca3af",
-    fontSize: "0.95rem",
-  },
-};

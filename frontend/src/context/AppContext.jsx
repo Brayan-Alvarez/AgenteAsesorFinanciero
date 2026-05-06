@@ -1,125 +1,122 @@
 /**
- * AppContext.jsx — Global state store for the financial advisor app.
+ * AppContext.jsx — Global state for the financial app.
  *
- * Why a context?
- *   Without shared state, navigating away from Dashboard and back would
- *   re-fetch data from the API on every visit, causing a flash of loading
- *   spinners and unnecessary network calls.  By hoisting state here, all
- *   expensive data is fetched ONCE on app start and shared across routes.
- *
- * What lives here:
- *   budgetData    — all categories from GET /api/budget (fetched once on mount)
- *   trendData     — monthly totals from GET /api/trend  (fetched once on mount)
- *   expensesCache — { "Marzo|all": [...], "Marzo|Sofi": [...], ... }
- *                   keyed by "month|person" so each combo is fetched at most once
- *   chatHistory   — conversation turns; persists across route changes
- *   isLoadingData — true while the initial budget + trend requests are in flight
- *   dataError     — error message if the initial fetch fails
- *
- * What stays LOCAL to each component:
- *   selectedMonth    (Dashboard)  — pure UI state, no benefit from being global
- *   expensesLoading  (Dashboard)  — only relevant while a per-month fetch runs
- *   input / loading  (Chat)       — ephemeral form state
+ * Holds two data layers:
+ *   1. Seed transactions + budget — interactive CRUD, derived KPIs, filters.
+ *      These use in-memory seed data because the backend doesn't expose
+ *      individual transaction endpoints yet (only aggregated by category).
+ *   2. Real API data — budget summary, trend, expense categories (read-only,
+ *      fetched from the FastAPI backend that reads Google Sheets).
  */
 
-import { createContext, useContext, useEffect, useState } from "react";
-
-import { getBudget, getExpenses, getTrend } from "../api/client";
-
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { getBudget, getExpenses, getTrend } from '../api/client.js';
+import { generateBudget, generateTransactions } from '../data/seed.js';
 
 const AppContext = createContext(null);
 
-// ---------------------------------------------------------------------------
-// Initial chat greeting — defined here so AppProvider owns it
-// ---------------------------------------------------------------------------
+// Stable seed so the data doesn't regenerate on every render
+const SEED_TXN    = generateTransactions();
+const SEED_BUDGET = generateBudget();
 
-const INITIAL_CHAT_HISTORY = [
-  { role: "agent", text: "¡Hola! Soy tu asesor financiero personal. ¿En qué te puedo ayudar hoy?" },
+const INITIAL_CHAT = [
+  { role: 'agent', text: '¡Hola! Soy tu asesor financiero personal. ¿En qué te puedo ayudar hoy?' },
 ];
 
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
-
 export function AppProvider({ children }) {
-  // --- Shared data state ---
-  const [budgetData,    setBudgetData]    = useState(null);
-  const [trendData,     setTrendData]     = useState(null);
-  const [expensesCache, setExpensesCache] = useState({});
-  const [isLoadingData, setIsLoadingData] = useState(true);
-  const [dataError,     setDataError]     = useState(null);
+  // ── Seed state (CRUD) ──────────────────────────────────────────────────────
+  const [transactions, setTransactions] = useState(SEED_TXN);
+  const [budget, setBudget]             = useState(SEED_BUDGET);
+  const [userFilter, setUserFilter]     = useState('all');
 
-  // --- Chat history — persists across route changes ---
-  const [chatHistory, setChatHistory] = useState(INITIAL_CHAT_HISTORY);
+  // ── Real API data ──────────────────────────────────────────────────────────
+  const [apiBudget,      setApiBudget]      = useState(null);
+  const [apiTrend,       setApiTrend]       = useState(null);
+  const [expensesCache,  setExpensesCache]  = useState({});
+  const [isLoadingApi,   setIsLoadingApi]   = useState(true);
+  const [apiError,       setApiError]       = useState(null);
 
-  // Fetch budget + trend exactly once when the app first mounts.
-  // Expenses are fetched lazily via fetchExpenses() below.
+  // ── Chat history ───────────────────────────────────────────────────────────
+  const [chatHistory, setChatHistory] = useState(INITIAL_CHAT);
+
+  // Fetch real API data once on mount
   useEffect(() => {
     Promise.all([getBudget(), getTrend()])
-      .then(([budget, trend]) => {
-        setBudgetData(budget.categories);
-        setTrendData(trend.trend);
+      .then(([b, t]) => {
+        setApiBudget(b.categories);
+        setApiTrend(t.trend);
       })
-      .catch((err) => setDataError(err.message))
-      .finally(() => setIsLoadingData(false));
-  }, []); // empty deps → runs once
+      .catch(err => setApiError(err.message))
+      .finally(() => setIsLoadingApi(false));
+  }, []);
 
-  /**
-   * Return cached expenses for a month+person combo, fetching from the API
-   * only on the first request for that combo.
-   *
-   * @param {string}      month  — Spanish month name, e.g. "Marzo"
-   * @param {string|null} person — Person name or null for combined expenses
-   * @returns {Promise<Array>}   Resolved with the items array
-   */
-  const fetchExpenses = async (month, person = null) => {
-    const key = `${month}|${person ?? "all"}`;
-
-    // Cache hit — return immediately without touching the network
-    if (expensesCache[key] !== undefined) {
-      return expensesCache[key];
-    }
-
-    // Cache miss — fetch, store, and return
+  // Lazy fetch expenses per month/person (cached)
+  const fetchExpenses = useCallback(async (month, person = null) => {
+    const key = `${month}|${person ?? 'all'}`;
+    if (expensesCache[key] !== undefined) return expensesCache[key];
     const data = await getExpenses(month, person);
-    setExpensesCache((prev) => ({ ...prev, [key]: data.items }));
+    setExpensesCache(prev => ({ ...prev, [key]: data.items }));
     return data.items;
-  };
+  }, [expensesCache]);
 
-  return (
-    <AppContext.Provider
-      value={{
-        // Budget + trend (fetched once on mount)
-        budgetData,
-        trendData,
-        isLoadingData,
-        dataError,
+  // ── Transaction actions ────────────────────────────────────────────────────
+  const addTransaction = useCallback((txn) => {
+    setTransactions(prev => {
+      const newId = prev.length > 0 ? Math.max(...prev.map(t => t.id)) + 1 : 1;
+      return [{ ...txn, id: newId }, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+  }, []);
 
-        // Expenses cache + loader (fetched lazily per month/person)
-        expensesCache,
-        fetchExpenses,
+  const updateTransaction = useCallback((id, txn) => {
+    setTransactions(prev => prev.map(t => t.id === id ? { ...txn, id } : t));
+  }, []);
 
-        // Chat history (persisted across route changes)
-        chatHistory,
-        setChatHistory,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
-  );
+  const deleteTransaction = useCallback((id) => {
+    setTransactions(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // ── Budget action ──────────────────────────────────────────────────────────
+  const updateBudget = useCallback((catId, month, value) => {
+    setBudget(prev => ({
+      ...prev,
+      [catId]: { ...prev[catId], [month]: Number(value) || 0 },
+    }));
+  }, []);
+
+  const value = useMemo(() => ({
+    // Seed data + CRUD
+    transactions,
+    budget,
+    userFilter,
+    setUserFilter,
+    addTransaction,
+    updateTransaction,
+    deleteTransaction,
+    updateBudget,
+
+    // Real API data
+    apiBudget,
+    apiTrend,
+    expensesCache,
+    fetchExpenses,
+    isLoadingApi,
+    apiError,
+
+    // Chat
+    chatHistory,
+    setChatHistory,
+  }), [
+    transactions, budget, userFilter,
+    apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
+    chatHistory,
+    addTransaction, updateTransaction, deleteTransaction, updateBudget,
+  ]);
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
-
-// ---------------------------------------------------------------------------
-// Custom hook — convenience wrapper with a helpful error if used outside provider
-// ---------------------------------------------------------------------------
 
 export function useAppContext() {
   const ctx = useContext(AppContext);
-  if (ctx === null) {
-    throw new Error("useAppContext must be used inside <AppProvider>.");
-  }
+  if (!ctx) throw new Error('useAppContext must be used inside <AppProvider>.');
   return ctx;
 }
