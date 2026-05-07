@@ -6,6 +6,7 @@
 .env
 frontend/.env
 credentials/
+railway.env.json
 
 # --- Python cache ---
 __pycache__/
