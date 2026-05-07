@@ -6,19 +6,19 @@ Architecture:
     GET  /api/budget        → api/routes/dashboard.py  (budget vs actual)
     GET  /api/expenses      → api/routes/dashboard.py  (monthly expenses)
     GET  /api/trend         → api/routes/dashboard.py  (monthly trend)
+    GET  /api/transactions  → api/routes/dashboard.py  (individual rows)
+    GET  /api/personas      → api/routes/dashboard.py  (person list)
     GET  /health            → inline health check
 
 CORS:
-    Allows requests from the React dev server (http://localhost:5173) by
-    default, and from any URL set in the FRONTEND_ORIGIN environment variable
-    (used for the Vercel production URL).
+    Always allows the Vite dev server (http://localhost:5173).
+    In production, set FRONTEND_URL to your Vercel URL so the deployed
+    React app can reach this backend.
 
 Running locally:
     uvicorn api.main:app --reload --port 8000
 
-    The interactive API docs are then available at:
-        http://localhost:8000/docs   (Swagger UI)
-        http://localhost:8000/redoc  (ReDoc)
+    Interactive API docs: http://localhost:8000/docs
 """
 
 import logging
@@ -58,12 +58,13 @@ app = FastAPI(
 
 # Build the list of allowed origins.
 # - Always allow the Vite dev server (React default port).
-# - Add the production frontend URL from env if set.
+# - In production, set FRONTEND_URL to your Vercel deployment URL,
+#   e.g. https://finanzas-belmont.vercel.app
 _allowed_origins = ["http://localhost:5173"]
 
-_frontend_origin = os.getenv("FRONTEND_ORIGIN", "").strip()
-if _frontend_origin:
-    _allowed_origins.append(_frontend_origin)
+_frontend_url = os.getenv("FRONTEND_URL", "").strip()
+if _frontend_url:
+    _allowed_origins.append(_frontend_url)
 
 app.add_middleware(
     CORSMiddleware,

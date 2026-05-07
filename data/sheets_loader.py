@@ -17,6 +17,7 @@ Actual Sheets structure (discovered from live data):
                         no dash between month and person name).
 """
 
+import json
 import logging
 import os
 import re
@@ -56,33 +57,54 @@ DERIVED_COLUMNS = ["Persona", "Mes"]
 
 def get_gspread_client() -> gspread.Client:
     """
-    Authenticate with Google Sheets API using a service account JSON key.
+    Authenticate with Google Sheets API using a service account key.
 
-    The path to the credentials file is loaded from the GOOGLE_CREDENTIALS_PATH
-    environment variable (default: credentials/service_account.json).
+    Two authentication modes are supported (checked in order):
+
+    1. **GOOGLE_CREDENTIALS_JSON** env var (production / Railway / Render):
+       Set this to the full contents of the service account JSON file.
+       The value can be the raw JSON string or a base64-encoded JSON string.
+       This avoids shipping credential files into containers.
+
+    2. **GOOGLE_CREDENTIALS_PATH** env var (local dev, default):
+       Path to the JSON key file on disk.  Defaults to
+       `credentials/service_account.json` when the var is unset.
 
     Returns:
         An authenticated gspread Client instance.
 
     Raises:
-        FileNotFoundError: If the credentials file path does not exist on disk.
-        google.auth.exceptions.MalformedError: If the JSON key is malformed.
+        ValueError: If neither credential source is available.
+        json.JSONDecodeError: If GOOGLE_CREDENTIALS_JSON is set but malformed.
+        FileNotFoundError: If GOOGLE_CREDENTIALS_PATH points to a missing file.
     """
+    # ── Mode 1: JSON string in environment variable (production) ──────────────
+    credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
+    if credentials_json:
+        # Support optional base64 encoding (useful when the JSON contains
+        # characters that some platforms escape in env vars).
+        if not credentials_json.startswith("{"):
+            import base64
+            credentials_json = base64.b64decode(credentials_json).decode("utf-8")
+
+        service_account_info = json.loads(credentials_json)
+        creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+        logger.info("Authenticated via GOOGLE_CREDENTIALS_JSON env var.")
+        return gspread.authorize(creds)
+
+    # ── Mode 2: JSON file on disk (local dev) ────────────────────────────────
     credentials_path = os.getenv(
         "GOOGLE_CREDENTIALS_PATH", "credentials/service_account.json"
     )
-
     if not os.path.exists(credentials_path):
         raise FileNotFoundError(
-            f"Google credentials file not found at '{credentials_path}'. "
-            "Set the GOOGLE_CREDENTIALS_PATH env var or place the JSON key "
-            "at credentials/service_account.json."
+            f"Google credentials not found. "
+            f"Set GOOGLE_CREDENTIALS_JSON (production) or place the service "
+            f"account key at '{credentials_path}' (local dev)."
         )
 
-    # Build OAuth2 credentials scoped to read-only Sheets + Drive access.
     creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
-
-    # gspread.authorize wraps the credentials into a ready-to-use client.
+    logger.info("Authenticated via credentials file '%s'.", credentials_path)
     return gspread.authorize(creds)
 
 
