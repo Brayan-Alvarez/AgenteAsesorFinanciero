@@ -224,20 +224,30 @@ Work through these phases in order. Do not skip ahead.
 - [x] src/api/client.js — centralized API calls (axios, getBudget / getExpenses / getTrend / sendMessage)
 - [x] Design system — dark mode CSS tokens (DM Sans + DM Mono, indigo/violet palette) in `src/index.css`
 - [x] App shell — sidebar 240px (desktop) + bottom nav with FAB (mobile), React Router v7
-- [x] AppContext — global state: seed transactions (CRUD), seed budget (editable), userFilter, real API cache, chat history
-- [x] `src/data/categories.js` — 21 categories with icon/color + USERS constant
-- [x] `src/data/seed.js` — transaction + budget generators, filterTxns helper
+- [x] AppContext — global state: real transactions from API, seed budget (editable), dynamic users, userFilter, chat history
+- [x] `src/data/categories.js` — 21 categories with icon/color; `getCat()` does fuzzy label matching (accent + slash normalization) so real sheet labels resolve correctly
+- [x] `src/data/seed.js` — budget generator + `filterTxns` helper (transactions come from API, budget still seeded)
 - [x] Shared components: Avatar, UserToggle, MonthNav, CatChip, Modal, TxnForm, DonutChart, TrendBarChart
 - [x] Dashboard — KPIs, budget bar, donut + legend, AI insights panel, 6-month trend, categories vs budget, recent transactions table
-- [x] Transactions — grouped by day, search + category filter, CRUD via modal
+- [x] Transactions — grouped by day, search + category filter, CRUD via modal (add/edit/delete in-memory)
 - [x] Budget — "by category" editable grid (category × month) + "by month" 12-card view
 - [x] Recommendations — 6 deterministic AI rules (overspend, projection, savings rate, comparison, tip, subscriptions)
 - [x] Chat — dark-styled conversational UI connected to /api/chat
 
-**Data layer notes:**
-- Seed transactions/budget → interactive CRUD; backend has no individual-transaction endpoints yet
-- Real API (budget summary, trend, expense categories) loaded into AppContext but seed data drives the UI
-- To fully connect: add `GET /api/transactions` and `GET/PUT /api/budget/{category}/{month}` to the FastAPI backend
+**Data layer — estado actual:**
+| Dato | Fuente | Notas |
+|---|---|---|
+| Transacciones individuales | `GET /api/transactions` → Google Sheets | Todos los meses, filtro por fecha en frontend |
+| Usuarios | `GET /api/personas` → `PERSON_NAMES` env | Nombres y colores dinámicos |
+| Resumen presupuesto (anual) | `GET /api/budget` → Google Sheets | Usado en AppContext |
+| Tendencia mensual | `GET /api/trend` → Google Sheets | Disponible en contexto |
+| Gastos por categoría | `GET /api/expenses` → Google Sheets | Caché lazy por mes/persona |
+| Presupuesto mensual (grilla) | Seed editable en memoria | El sheet de presupuesto es anual; no hay endpoint de desglose mensual |
+| Chat / agente IA | `POST /api/chat` → LangGraph | Conectado |
+
+**Pendiente para conexión total:**
+- Escritura de transacciones al sheet (add/edit/delete hoy solo persisten en memoria)
+- Presupuesto mensual por categoría desde el sheet (hoy usa valores seed)
 
 ### Phase 5 — Deploy ← CURRENT
 - [ ] FastAPI → Railway or Render (free tier)
