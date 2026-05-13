@@ -41,7 +41,7 @@ def get_llm() -> ChatOllama | ChatGoogleGenerativeAI:
         )
     elif provider == "gemini":
         return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
             google_api_key=os.getenv("GEMINI_API_KEY"),
         )
     else:
