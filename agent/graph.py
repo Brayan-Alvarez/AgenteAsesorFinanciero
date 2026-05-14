@@ -189,7 +189,12 @@ def run_agent(user_message: str) -> str:
     final_state = _graph.invoke(initial_state)
 
     # The last message in the final state is always the agent's reply.
-    return final_state["messages"][-1].content
+    # Gemini 2.5+ returns content as a list of blocks [{"type": "text", "text": "..."}]
+    # instead of a plain string. Normalize to string so ChatResponse validates correctly.
+    content = final_state["messages"][-1].content
+    if isinstance(content, list):
+        return "".join(block.get("text", "") for block in content if isinstance(block, dict))
+    return str(content)
 
 
 # ---------------------------------------------------------------------------
