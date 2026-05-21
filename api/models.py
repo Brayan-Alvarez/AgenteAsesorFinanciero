@@ -147,3 +147,148 @@ class PersonasResponse(BaseModel):
     """All persons configured via the PERSON_NAMES environment variable."""
 
     personas: list[PersonaItem]
+
+
+# ---------------------------------------------------------------------------
+# Supabase — Categories
+# ---------------------------------------------------------------------------
+
+class SubcategoryOut(BaseModel):
+    id: str
+    category_id: str
+    name: str
+    sort_order: int
+
+class CategoryOut(BaseModel):
+    id: str
+    name: str
+    icon: str
+    color: str
+    type: str
+    sort_order: int
+    subcategories: list[SubcategoryOut] = []
+
+class CategoryCreate(BaseModel):
+    name: str
+    icon: str = "📦"
+    color: str = "#94a3b8"
+    type: str = "variable"
+    sort_order: int = 0
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    type: Optional[str] = None
+    sort_order: Optional[int] = None
+
+class SubcategoryCreate(BaseModel):
+    name: str
+    sort_order: int = 0
+
+class SubcategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Supabase — Budget
+# ---------------------------------------------------------------------------
+
+class BudgetOut(BaseModel):
+    id: str
+    category_id: str
+    user_id: str
+    year: int
+    month: int
+    amount: int
+    categories: Optional[dict] = None   # joined category info
+
+class BudgetUpsert(BaseModel):
+    category_id: str
+    user_id: str
+    year: int
+    month: int
+    amount: int
+    reason: Optional[str] = None
+
+class BudgetHistoryOut(BaseModel):
+    id: str
+    category_id: Optional[str]
+    user_id: Optional[str]
+    year: int
+    month: int
+    old_amount: Optional[int]
+    new_amount: int
+    reason: Optional[str]
+    changed_at: str
+
+
+# ---------------------------------------------------------------------------
+# Supabase — Transactions (Supabase-backed)
+# ---------------------------------------------------------------------------
+
+class TransactionCreate(BaseModel):
+    user_id: str
+    date: str
+    category_id: str
+    description: str
+    amount: int
+    type: str                           # 'income' | 'expense'
+    subcategory_id: Optional[str] = None
+    notes: Optional[str] = None
+
+class TransactionUpdate(BaseModel):
+    date: Optional[str] = None
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[int] = None
+    type: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Supabase — Debts
+# ---------------------------------------------------------------------------
+
+class DebtOut(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    total_amount: int
+    pending_amount: int                 # computed: total - sum(payments)
+    user_id: Optional[str]
+    color: str
+    status: str
+    due_date: Optional[str]
+    interest_rate: Optional[float]
+    created_at: str
+    debt_payments: list[dict] = []
+    users: Optional[dict] = None
+
+class DebtCreate(BaseModel):
+    name: str
+    total_amount: int
+    user_id: Optional[str] = None
+    description: Optional[str] = None
+    color: str = "#dc2626"
+    due_date: Optional[str] = None
+    interest_rate: Optional[float] = None
+
+class DebtUpdate(BaseModel):
+    name: Optional[str] = None
+    total_amount: Optional[int] = None
+    user_id: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    due_date: Optional[str] = None
+    interest_rate: Optional[float] = None
+    status: Optional[str] = None
+
+class DebtPaymentCreate(BaseModel):
+    amount: int
+    date: str
+    paid_by: Optional[str] = None
+    description: Optional[str] = None
+    notes: Optional[str] = None
