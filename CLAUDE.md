@@ -341,16 +341,18 @@ PUT    /api/budget
 - [x] Recommendations — deterministic AI rules (overspend, projection, savings rate, etc.)
 - [x] Chat — connected to /api/chat
 
-### Phase 5 — Deploy ← CURRENT
+### Phase 5 — Deploy ✅ COMPLETE
 - [x] Deploy FastAPI to Railway — https://agenteasesorfinanciero-production.up.railway.app
-- [x] Set all backend env vars in Railway dashboard (GOOGLE_CREDENTIALS_JSON, BUDGET_SHEET_ID, EXPENSES_SHEET_ID, PERSON_NAMES, GEMINI_API_KEY, PYTHONPATH)
-- [x] Smoke tested: /health, /api/personas, /api/transactions, /api/trend all return real Sheets data
+- [x] Set all backend env vars in Railway dashboard (GOOGLE_CREDENTIALS_JSON, BUDGET_SHEET_ID, EXPENSES_SHEET_ID, PERSON_NAMES, GEMINI_API_KEY, PYTHONPATH, GEMINI_MODEL)
+- [x] Smoke tested: /health, /api/personas, /api/transactions, /api/trend, /api/chat all return real data
 - [x] railway.toml — startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
 - [x] sheets_loader.py — supports GOOGLE_CREDENTIALS_JSON env var (production) + file path fallback (local dev)
-- [ ] Deploy React frontend to Vercel (free tier)
-- [ ] Set VITE_API_URL=https://agenteasesorfinanciero-production.up.railway.app in Vercel dashboard
-- [ ] Update FRONTEND_URL in Railway with the Vercel URL (for CORS)
-- [ ] Smoke test full app: open Vercel URL, verify charts + chat load from production API
+- [x] Deploy React frontend to Vercel — https://agente-asesor-financiero.vercel.app
+- [x] Set VITE_API_URL=https://agenteasesorfinanciero-production.up.railway.app in Vercel dashboard
+- [x] Update FRONTEND_URL in Railway with the Vercel URL (for CORS)
+- [x] GEMINI_MODEL env var — configurable without code changes (default: gemini-1.5-flash)
+- [x] fix: normalize Gemini 2.5+ content blocks to string — ChatResponse now stable with all model versions
+- [x] Smoke test full app: charts load from Sheets, chat responds with real financial data
 
 ### Phase 6 — Transactions & Budget API (CRUD)
 *Complete Phase 5 first. Deploy with current Sheets data, then add write endpoints.*
