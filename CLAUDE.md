@@ -393,27 +393,20 @@ CREATE TABLE subcategories (
   created_at  timestamptz DEFAULT now()
 );
 
--- Presupuesto mensual por categoría
+-- Presupuesto mensual por categoría y por usuario
+-- Cada usuario define su propio monto para cada categoría.
+-- Una categoría puede tener presupuesto solo para Belmont, solo para Sofi, o para ambos.
+-- Ejemplo: Belmont → Restaurantes $800k | Sofi → Restaurantes $200k
+-- Vista Pareja: muestra $1M total (80% Belmont, 20% Sofi) — derivado automáticamente.
 CREATE TABLE budget (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   category_id uuid REFERENCES categories(id) ON DELETE CASCADE,
+  user_id     uuid REFERENCES users(id),   -- a quién pertenece este presupuesto
   year        int  NOT NULL,
   month       int  NOT NULL CHECK (month BETWEEN 1 AND 12),
-  amount      int  NOT NULL,  -- monto total del hogar en COP
+  amount      int  NOT NULL,               -- monto en COP para este usuario
   created_at  timestamptz DEFAULT now(),
-  UNIQUE (category_id, year, month)
-);
-
--- Distribución del presupuesto por usuario (splits)
--- Permite definir qué porcentaje aporta cada persona a una categoría.
--- Ejemplo: Restaurantes $1.000.000 → Belmont 80% ($800k), Sofi 20% ($200k)
-CREATE TABLE budget_splits (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  budget_id  uuid REFERENCES budget(id) ON DELETE CASCADE,
-  user_id    uuid REFERENCES users(id),
-  percentage int  NOT NULL CHECK (percentage BETWEEN 0 AND 100),
-  -- La suma de porcentajes por budget_id debe ser 100 (validado en backend)
-  UNIQUE (budget_id, user_id)
+  UNIQUE (category_id, user_id, year, month)
 );
 
 -- Historial de cambios del presupuesto (trazabilidad)
@@ -472,9 +465,12 @@ CREATE TABLE debt_payments (
 ```
 
 **Reglas de negocio clave:**
-- Al crear una categoría → queda disponible inmediatamente para transacciones
-- Los splits de presupuesto deben sumar 100% por categoría/mes
-- Si no hay splits definidos → se asume 50/50 entre los dos usuarios
+- Al crear una categoría → queda disponible inmediatamente para transacciones de cualquier usuario
+- Una categoría puede tener presupuesto solo de Belmont, solo de Sofi, o de ambos — no hay restricción
+- Vista individual (Belmont o Sofi): muestra únicamente las categorías donde ese usuario tiene presupuesto
+- Vista Pareja: agrupa por categoría y suma los montos de todos los usuarios que la tengan;
+  los porcentajes de contribución se calculan automáticamente (no se configuran)
+- El presupuesto de cada usuario es independiente — cada quien edita el suyo sin afectar al otro
 - El saldo pendiente de una deuda = `total_amount − SUM(debt_payments.amount)`
 - Las deudas se muestran en la vista de Presupuesto con pestaña separada
 - Una deuda pagada (saldo = 0) cambia automáticamente a `status = 'paid'`
@@ -523,8 +519,9 @@ CREATE TABLE debt_payments (
   - Lista de categorías con monto presupuestado, gastado y % usado
   - Botón "+ Categoría" → modal para crear categoría (nombre, icono, color, tipo)
   - Click en categoría → expande subcategorías + edición inline del monto
-  - Edición del split: slider o inputs % Belmont / % Sofi (suma debe ser 100%)
-  - En vista "Pareja": barra apilada mostrando cuánto aporta cada uno
+  - Cada usuario edita su propio monto directamente (no hay configuración de split)
+  - En vista "Pareja": barra apilada mostrando el monto de cada uno y el % derivado;
+    si solo uno tiene presupuesto para esa categoría se muestra solo su aporte (100%)
   - Ícono de historial por categoría → drawer con cambios anteriores
 - **Pestaña Deudas:**
   - Cards por deuda: nombre, saldo pendiente, barra de progreso, próximo vencimiento
