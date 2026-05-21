@@ -354,31 +354,205 @@ PUT    /api/budget
 - [x] fix: normalize Gemini 2.5+ content blocks to string — ChatResponse now stable with all model versions
 - [x] Smoke test full app: charts load from Sheets, chat responds with real financial data
 
-### Phase 6 — Transactions & Budget API (CRUD)
-*Complete Phase 5 first. Deploy with current Sheets data, then add write endpoints.*
-- [ ] api/routes/transactions.py — GET/POST/PUT/DELETE /api/transactions
-- [ ] api/routes/dashboard.py — add GET/PUT /api/budget/monthly
-- [ ] api/models.py — add TransactionCreate, TransactionUpdate, BudgetUpdate
-- [ ] frontend/src/api/client.js — add createTransaction, updateTransaction, deleteTransaction, updateBudget
-- [ ] Connect TxnForm (add/edit/delete) to real API — remove in-memory CRUD
-- [ ] Connect Budget grid to real API — remove seed data
-- [ ] Update AppContext to use new endpoints
+### Phase 6 — Supabase + Sistema de Presupuesto ← CURRENT
+*Se elimina la dependencia de Google Sheets para escritura. Supabase es la fuente de verdad
+para categorías, presupuesto, deudas y transacciones. Los Sheets siguen usándose solo para
+importar el historial inicial de transacciones.*
 
-### Phase 7 — Supabase Migration
-*Complete Phase 6 first (full CRUD working with Sheets), then swap the data layer.*
-- [ ] Create Supabase project at supabase.com (free tier)
-- [ ] Run db/schema.sql in Supabase SQL editor
-- [ ] Seed categories (15) and subcategories from categories.js into DB
-- [ ] Add `supabase-py` to requirements.txt
-- [ ] Create db/client.py — Supabase Python client singleton
-- [ ] Create db/queries.py — all DB queries centralized (get_transactions, create_transaction, etc.)
-- [ ] Write data/migrate_to_supabase.py — one-time script: read Sheets → insert into DB
-- [ ] Run migration, verify row counts match Sheets exactly
-- [ ] Update api/routes/ to use db/queries.py instead of sheets_loader + data_processor
-- [ ] Update agent/tools.py to query DB instead of Sheets
-- [ ] Remove BUDGET_SHEET_ID and EXPENSES_SHEET_ID from active .env (keep in .env.example for reference)
-- [ ] Remove seed.js budget — AppContext loads budget from DB
-- [ ] End-to-end test: add transaction in frontend → verify in Supabase dashboard → verify agent sees it
+#### 6A — Base de datos Supabase
+
+**Modelo de datos completo:**
+
+```sql
+-- Usuarios del hogar
+CREATE TABLE users (
+  id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  color text NOT NULL,   -- color HEX del avatar
+  avatar text NOT NULL,  -- inicial del nombre
+  created_at timestamptz DEFAULT now()
+);
+
+-- Categorías (definidas por el usuario, no hardcodeadas)
+CREATE TABLE categories (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL,
+  icon       text NOT NULL DEFAULT '📦',
+  color      text NOT NULL DEFAULT '#94a3b8',
+  type       text CHECK (type IN ('fixed', 'variable')) NOT NULL DEFAULT 'variable',
+  sort_order int  DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Subcategorías por categoría
+CREATE TABLE subcategories (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id uuid REFERENCES categories(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  sort_order  int  DEFAULT 0,
+  created_at  timestamptz DEFAULT now()
+);
+
+-- Presupuesto mensual por categoría
+CREATE TABLE budget (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id uuid REFERENCES categories(id) ON DELETE CASCADE,
+  year        int  NOT NULL,
+  month       int  NOT NULL CHECK (month BETWEEN 1 AND 12),
+  amount      int  NOT NULL,  -- monto total del hogar en COP
+  created_at  timestamptz DEFAULT now(),
+  UNIQUE (category_id, year, month)
+);
+
+-- Distribución del presupuesto por usuario (splits)
+-- Permite definir qué porcentaje aporta cada persona a una categoría.
+-- Ejemplo: Restaurantes $1.000.000 → Belmont 80% ($800k), Sofi 20% ($200k)
+CREATE TABLE budget_splits (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  budget_id  uuid REFERENCES budget(id) ON DELETE CASCADE,
+  user_id    uuid REFERENCES users(id),
+  percentage int  NOT NULL CHECK (percentage BETWEEN 0 AND 100),
+  -- La suma de porcentajes por budget_id debe ser 100 (validado en backend)
+  UNIQUE (budget_id, user_id)
+);
+
+-- Historial de cambios del presupuesto (trazabilidad)
+CREATE TABLE budget_history (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  budget_id   uuid REFERENCES budget(id),
+  category_id uuid REFERENCES categories(id),
+  year        int  NOT NULL,
+  month       int  NOT NULL,
+  old_amount  int,
+  new_amount  int,
+  changed_by  uuid REFERENCES users(id),
+  reason      text,  -- nota opcional del usuario al cambiar el presupuesto
+  changed_at  timestamptz DEFAULT now()
+);
+
+-- Transacciones
+CREATE TABLE transactions (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        uuid REFERENCES users(id),
+  date           date NOT NULL,
+  category_id    uuid REFERENCES categories(id),
+  subcategory_id uuid REFERENCES subcategories(id),
+  description    text NOT NULL,
+  amount         int  NOT NULL,  -- COP positivo siempre
+  type           text CHECK (type IN ('income', 'expense')) NOT NULL,
+  notes          text,
+  created_at     timestamptz DEFAULT now()
+);
+
+-- Deudas (créditos, tarjetas, préstamos personales, etc.)
+CREATE TABLE debts (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         text NOT NULL,         -- "Tarjeta Visa", "Préstamo carro"
+  description  text,
+  total_amount int  NOT NULL,         -- monto original de la deuda en COP
+  user_id      uuid REFERENCES users(id),  -- NULL = deuda del hogar compartida
+  color        text DEFAULT '#dc2626',
+  status       text CHECK (status IN ('active', 'paid')) DEFAULT 'active',
+  due_date     date,                  -- fecha de vencimiento total (opcional)
+  interest_rate numeric(5,2),        -- tasa de interés (opcional, para info)
+  created_at   timestamptz DEFAULT now()
+);
+
+-- Abonos a deudas
+CREATE TABLE debt_payments (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debt_id     uuid REFERENCES debts(id) ON DELETE CASCADE,
+  amount      int  NOT NULL,          -- monto abonado en COP
+  date        date NOT NULL,
+  description text,                   -- "Abono cuota 3", "Pago mínimo", etc.
+  paid_by     uuid REFERENCES users(id),
+  notes       text,
+  created_at  timestamptz DEFAULT now()
+);
+```
+
+**Reglas de negocio clave:**
+- Al crear una categoría → queda disponible inmediatamente para transacciones
+- Los splits de presupuesto deben sumar 100% por categoría/mes
+- Si no hay splits definidos → se asume 50/50 entre los dos usuarios
+- El saldo pendiente de una deuda = `total_amount − SUM(debt_payments.amount)`
+- Las deudas se muestran en la vista de Presupuesto con pestaña separada
+- Una deuda pagada (saldo = 0) cambia automáticamente a `status = 'paid'`
+
+#### 6B — Backend (FastAPI + Supabase)
+
+- [ ] Crear proyecto en supabase.com y ejecutar el schema SQL anterior
+- [ ] Seed inicial: insertar usuarios (Belmont, Sofi) y categorías base en Supabase
+- [ ] Importar historial de transacciones desde Google Sheets → Supabase (script de migración)
+- [ ] Añadir `supabase-py` a requirements.txt
+- [ ] `db/client.py` — cliente Supabase singleton (lee SUPABASE_URL + SUPABASE_SERVICE_KEY)
+- [ ] `db/queries.py` — todas las queries centralizadas:
+  - categorías CRUD + subcategorías CRUD
+  - presupuesto CRUD + splits + historial
+  - transacciones CRUD
+  - deudas CRUD + abonos CRUD
+- [ ] Nuevos endpoints:
+  ```
+  GET/POST        /api/categories
+  PUT/DELETE      /api/categories/{id}
+  POST            /api/categories/{id}/subcategories
+  DELETE          /api/subcategories/{id}
+
+  GET/POST        /api/budget?year=&month=
+  PUT             /api/budget/{id}
+  GET             /api/budget/{id}/history
+  POST/PUT        /api/budget/{id}/splits
+
+  GET/POST        /api/transactions
+  PUT/DELETE      /api/transactions/{id}
+
+  GET/POST        /api/debts
+  PUT/DELETE      /api/debts/{id}
+  POST            /api/debts/{id}/payments
+  DELETE          /api/debt-payments/{id}
+  ```
+- [ ] Actualizar `agent/tools.py` para leer de Supabase en vez de Sheets
+
+#### 6C — Frontend
+
+**Vista Presupuesto (rediseño):**
+- Dos pestañas principales: `Presupuesto` | `Deudas`
+- **Pestaña Presupuesto:**
+  - Selector de mes/año
+  - Toggle usuario (Belmont / Sofi / Pareja)
+  - Lista de categorías con monto presupuestado, gastado y % usado
+  - Botón "+ Categoría" → modal para crear categoría (nombre, icono, color, tipo)
+  - Click en categoría → expande subcategorías + edición inline del monto
+  - Edición del split: slider o inputs % Belmont / % Sofi (suma debe ser 100%)
+  - En vista "Pareja": barra apilada mostrando cuánto aporta cada uno
+  - Ícono de historial por categoría → drawer con cambios anteriores
+- **Pestaña Deudas:**
+  - Cards por deuda: nombre, saldo pendiente, barra de progreso, próximo vencimiento
+  - Botón "Abonar" → modal con monto, fecha, quién paga, notas
+  - Botón "+ Deuda" → modal para crear deuda
+  - Toggle usuario: filtra por propietario o muestra todas (Pareja)
+  - Deuda pagada → card con estado "Pagada ✓" en verde, colapsable
+
+**Otras vistas afectadas:**
+- Transacciones → selector de categoría usa categorías de Supabase (no hardcodeadas)
+- TxnForm → CRUD real contra `/api/transactions`
+- AppContext → reemplaza seed data y Sheets cache con queries a Supabase endpoints
+
+#### 6D — Migración de datos
+- [ ] Script `data/migrate_to_supabase.py`:
+  1. Lee todas las transacciones de Google Sheets
+  2. Mapea categorías de texto a UUIDs de la tabla `categories`
+  3. Inserta en `transactions` de Supabase
+  4. Verifica que el total por mes coincida con los datos originales
+
+### Phase 7 — Agente IA con contexto Supabase
+*Una vez que toda la data está en Supabase, el agente puede responder con más precisión
+y el usuario puede hacer preguntas sobre deudas, splits de presupuesto, etc.*
+- [ ] Actualizar `agent/tools.py` para usar `db/queries.py`
+- [ ] Añadir herramienta `get_debt_summary` — saldos pendientes por deuda
+- [ ] Añadir herramienta `get_budget_splits` — distribución por usuario
+- [ ] Prompt actualizado para incluir contexto de deudas y splits
+- [ ] Test end-to-end: "¿Cuánto le debo a la tarjeta Visa?" → respuesta correcta
 
 ---
 
