@@ -117,6 +117,29 @@ export async function deleteTransactionDb(id) {
   await api.delete(`/api/transactions/db/${id}`);
 }
 
+// ── Supabase — Summary (Dashboard aggregates) ─────────────────────────────────
+
+export async function getBudgetSummary(year, month, userId = null) {
+  const params = { year, month };
+  if (userId) params.user_id = userId;
+  const response = await api.get("/api/summary/budget", { params });
+  return response.data;
+}
+
+export async function getTrendSummary(year, userId = null) {
+  const params = { year };
+  if (userId) params.user_id = userId;
+  const response = await api.get("/api/summary/trend", { params });
+  return response.data;
+}
+
+export async function getExpensesSummary(year, month, userId = null) {
+  const params = { year, month };
+  if (userId) params.user_id = userId;
+  const response = await api.get("/api/summary/expenses", { params });
+  return response.data;
+}
+
 // ── Supabase — Debts ──────────────────────────────────────────────────────────
 
 export async function getDebts(userId = null) {

@@ -2,19 +2,17 @@
  * Dashboard.jsx — Resumen mensual con KPIs, presupuesto, gráficas y recomendaciones IA.
  *
  * Datos:
- *   - KPIs, donut, tendencia, categorías vs presupuesto, últimas transacciones
- *     → seed transactions + seed budget (estado local interactivo)
- *   - Tendencia real de 6 meses → API /api/trend (si el backend está disponible)
+ *   - KPIs, donut, tendencia, últimas transacciones → AppContext (Supabase transactions)
+ *   - Categorías vs presupuesto, budget total → /api/summary/budget (Supabase)
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, PiggyBank, Plus, Sparkles, TrendingUp } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
-import { CATEGORIES, getCat } from '../data/categories.js';
 import { filterTxns } from '../data/seed.js';
+import { getBudgetSummary } from '../api/client.js';
 import Avatar from '../components/Avatar.jsx';
-import CatChip from '../components/CatChip.jsx';
 import DonutChart from '../components/DonutChart.jsx';
 import MonthNav from '../components/MonthNav.jsx';
 import TrendBarChart from '../components/TrendBarChart.jsx';
@@ -43,13 +41,36 @@ const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','
 // ---------------------------------------------------------------------------
 
 export default function Dashboard({ openTxnForm }) {
-  const { transactions, budget, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
+  const { transactions, categories, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
 
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
 
-  const userMultiplier = userFilter === 'all' ? 2 : 1;
+  // Budget summary from Supabase: [{ name, planned, actual, remaining, pct_used, color, icon }]
+  const [budgetSummary,    setBudgetSummary]    = useState([]);
+  const [isLoadingBudget,  setIsLoadingBudget]  = useState(false);
+
+  useEffect(() => {
+    async function fetchBudget() {
+      setIsLoadingBudget(true);
+      try {
+        const userId = userFilter !== 'all' ? userFilter : null;
+        const res    = await getBudgetSummary(year, month, userId);
+        setBudgetSummary(res.categories || []);
+      } catch (err) {
+        console.error('Failed to fetch budget summary:', err);
+        setBudgetSummary([]);
+      } finally {
+        setIsLoadingBudget(false);
+      }
+    }
+    fetchBudget();
+  }, [year, month, userFilter]);
+
+  // Helper: look up category by ID from AppContext
+  const getCatById = (id) =>
+    categories.find(c => c.id === id) ?? { name: '?', icon: '📦', color: '#94a3b8' };
 
   // ── Current month transactions ─────────────────────────────────────────────
   const txnsMonth = useMemo(
@@ -57,13 +78,14 @@ export default function Dashboard({ openTxnForm }) {
     [transactions, userFilter, year, month],
   );
 
-  const incomeTotal  = txnsMonth.filter(t => t.type === 'income' && t.category === 'ingreso').reduce((s, t) => s + t.amount, 0);
+  const incomeTotal  = txnsMonth.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const expenseTotal = txnsMonth.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const savings      = txnsMonth.filter(t => t.category === 'ahorro').reduce((s, t) => s + t.amount, 0);
+  // Savings = expense transactions in the "Ahorro" category (transfers to savings account)
+  const savings      = txnsMonth.filter(t => t.type === 'expense' && t.category === 'Ahorro').reduce((s, t) => s + t.amount, 0);
   const balance      = incomeTotal - expenseTotal;
 
-  // ── Budget for this month ──────────────────────────────────────────────────
-  const budgetTotal = Object.values(budget).reduce((s, m) => s + (m[month] || 0), 0) * userMultiplier;
+  // ── Budget totals from Supabase summary ────────────────────────────────────
+  const budgetTotal = budgetSummary.reduce((s, c) => s + (c.planned || 0), 0);
   const budgetPct   = budgetTotal > 0 ? (expenseTotal / budgetTotal) * 100 : 0;
   const daysInMonth = new Date(year, month, 0).getDate();
   const today       = (now.getMonth() + 1 === month && now.getFullYear() === year) ? now.getDate() : daysInMonth;
@@ -83,12 +105,14 @@ export default function Dashboard({ openTxnForm }) {
   const spendByCat = useMemo(() => {
     const map = {};
     txnsMonth.filter(t => t.type === 'expense').forEach(t => {
-      map[t.category] = (map[t.category] || 0) + t.amount;
+      if (!map[t.categoryId]) {
+        const cat = getCatById(t.categoryId);
+        map[t.categoryId] = { value: 0, color: cat.color, label: cat.name, icon: cat.icon };
+      }
+      map[t.categoryId].value += t.amount;
     });
-    return Object.entries(map)
-      .map(([id, value]) => ({ id, value, ...getCat(id) }))
-      .sort((a, b) => b.value - a.value);
-  }, [txnsMonth]);
+    return Object.values(map).sort((a, b) => b.value - a.value);
+  }, [txnsMonth, categories]);
 
   const donutData = spendByCat.slice(0, 6).map(c => ({ value: c.value, color: c.color, label: c.label }));
   if (spendByCat.length > 6) {
@@ -96,15 +120,15 @@ export default function Dashboard({ openTxnForm }) {
     donutData.push({ value: rest, color: '#3b3b5b', label: 'Otros' });
   }
 
-  // ── 6-month trend (seed data) ──────────────────────────────────────────────
+  // ── 6-month trend (from AppContext transactions) ───────────────────────────
   const barData = useMemo(() => {
     return Array.from({ length: 6 }, (_, i) => {
       let m = month - (5 - i);
       let y = year;
       while (m <= 0) { m += 12; y--; }
-      const t = filterTxns(transactions, userFilter, y, m);
+      const t       = filterTxns(transactions, userFilter, y, m);
       const expense = t.filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
-      const sav     = t.filter(x => x.category === 'ahorro').reduce((s, x) => s + x.amount, 0);
+      const sav     = t.filter(x => x.type === 'expense' && x.category === 'Ahorro').reduce((s, x) => s + x.amount, 0);
       return {
         label: MONTHS_SHORT[m - 1],
         segments: [
@@ -117,27 +141,23 @@ export default function Dashboard({ openTxnForm }) {
 
   const barMax = Math.max(...barData.map(d => d.segments.reduce((s, x) => s + x.value, 0))) * 1.1 || 1;
 
-  // ── Categories vs budget ───────────────────────────────────────────────────
+  // ── Categories vs budget (from Supabase summary) ───────────────────────────
   const catVsBudget = useMemo(() => {
-    return CATEGORIES.filter(c => c.id !== 'ingreso').map(c => {
-      const spent    = txnsMonth.filter(t => t.category === c.id && t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-      const budgeted = (budget[c.id]?.[month] || 0) * userMultiplier;
-      return { ...c, spent, budgeted, pct: budgeted > 0 ? (spent / budgeted) * 100 : 0 };
-    })
-      .filter(c => c.spent > 0 || c.budgeted > 0)
-      .sort((a, b) => b.pct - a.pct);
-  }, [txnsMonth, budget, month, userMultiplier]);
+    return budgetSummary
+      .filter(c => c.planned > 0 || c.actual > 0)
+      .sort((a, b) => b.pct_used - a.pct_used);
+  }, [budgetSummary]);
 
   // ── AI insights (deterministic rules) ─────────────────────────────────────
   const aiInsights = useMemo(() => {
     const out = [];
     catVsBudget.forEach(c => {
-      if (c.pct > 100 && c.budgeted > 0 && out.length < 2) {
+      if (c.pct_used > 100 && c.planned > 0 && out.length < 2) {
         out.push({
           type: 'warn',
           icon: <AlertTriangle size={16} />,
-          title: `Gasto excesivo en ${c.label}`,
-          body: `Llevas ${fmt(c.spent, { compact: true })} de ${fmt(c.budgeted, { compact: true })} presupuestados (${Math.round(c.pct)}%). Considera frenar este rubro.`,
+          title: `Gasto excesivo en ${c.name}`,
+          body: `Llevas ${fmt(c.actual, { compact: true })} de ${fmt(c.planned, { compact: true })} presupuestados (${Math.round(c.pct_used)}%). Considera frenar este rubro.`,
         });
       }
     });
@@ -175,7 +195,7 @@ export default function Dashboard({ openTxnForm }) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-dim)', flexDirection: 'column', gap: 16 }}>
         <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', animation: 'spin 0.8s linear infinite' }} />
-        <span>Cargando datos desde Google Sheets…</span>
+        <span>Cargando datos…</span>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
@@ -205,7 +225,7 @@ export default function Dashboard({ openTxnForm }) {
         <div className="card">
           <div className="kpi-label">Ingresos</div>
           <div className="kpi-value mono" style={{ color: 'var(--green)' }}>{fmt(incomeTotal, { compact: true })}</div>
-          <div className="kpi-foot">{txnsMonth.filter(t => t.category === 'ingreso').length} transacciones</div>
+          <div className="kpi-foot">{txnsMonth.filter(t => t.type === 'income').length} transacciones</div>
         </div>
         <div className="card">
           <div className="kpi-label">Gastos</div>
@@ -242,9 +262,13 @@ export default function Dashboard({ openTxnForm }) {
               <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>/ {fmt(budgetTotal, { compact: true })}</span>
             </div>
           </div>
-          <span className={`pill ${budgetPct > 100 ? 'down' : budgetPct > 85 ? 'warn' : 'up'}`}>
-            {budgetPct.toFixed(0)}% usado
-          </span>
+          {isLoadingBudget ? (
+            <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>Cargando…</span>
+          ) : (
+            <span className={`pill ${budgetPct > 100 ? 'down' : budgetPct > 85 ? 'warn' : 'up'}`}>
+              {budgetPct.toFixed(0)}% usado
+            </span>
+          )}
         </div>
         <div className="bar" style={{ height: 10 }}>
           <div className="bar-fill" style={{
@@ -336,28 +360,35 @@ export default function Dashboard({ openTxnForm }) {
             <div className="card-head">
               <div className="card-title">Categorías vs presupuesto</div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {catVsBudget.slice(0, 6).map(c => (
-                <div key={c.id}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 13 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="cat-dot" style={{ background: c.color, width: 9, height: 9 }} />
-                      {c.label}
-                    </span>
-                    <span className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-                      <span style={{ color: c.pct > 100 ? 'var(--red)' : 'var(--text)' }}>{fmt(c.spent, { compact: true })}</span>
-                      <span> / {fmt(c.budgeted, { compact: true })}</span>
-                    </span>
+            {isLoadingBudget ? (
+              <div style={{ color: 'var(--text-mute)', fontSize: 13, padding: '8px 0' }}>Cargando…</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {catVsBudget.slice(0, 6).map(c => (
+                  <div key={c.name}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 13 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="cat-dot" style={{ background: c.color, width: 9, height: 9 }} />
+                        {c.icon} {c.name}
+                      </span>
+                      <span className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                        <span style={{ color: c.pct_used > 100 ? 'var(--red)' : 'var(--text)' }}>{fmt(c.actual, { compact: true })}</span>
+                        <span> / {fmt(c.planned, { compact: true })}</span>
+                      </span>
+                    </div>
+                    <div className="bar">
+                      <div className="bar-fill" style={{
+                        width: `${Math.min(c.pct_used, 100)}%`,
+                        background: c.pct_used > 100 ? 'var(--red)' : c.pct_used > 85 ? 'var(--amber)' : c.color,
+                      }} />
+                    </div>
                   </div>
-                  <div className="bar">
-                    <div className="bar-fill" style={{
-                      width: `${Math.min(c.pct, 100)}%`,
-                      background: c.pct > 100 ? 'var(--red)' : c.pct > 85 ? 'var(--amber)' : c.color,
-                    }} />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+                {catVsBudget.length === 0 && (
+                  <div style={{ color: 'var(--text-mute)', fontSize: 13 }}>Sin presupuesto configurado para este mes.</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -380,11 +411,18 @@ export default function Dashboard({ openTxnForm }) {
           </thead>
           <tbody>
             {recent.map(t => {
-              const u = getUser(t.userId);
+              const u   = getUser(t.userId) ?? t.user;
+              const cat = categories.find(c => c.id === t.categoryId)
+                       ?? { name: t.category, icon: '📦', color: '#94a3b8' };
               return (
                 <tr key={t.id} onClick={() => openTxnForm(t)} style={{ cursor: 'pointer' }}>
                   <td>{t.desc}</td>
-                  <td><CatChip catId={t.category} /></td>
+                  <td>
+                    <span className="cat-chip">
+                      <span className="cat-dot" style={{ background: cat.color }} />
+                      {cat.icon} {cat.name}
+                    </span>
+                  </td>
                   <td>
                     <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
                       <Avatar user={u} /> {u?.name}

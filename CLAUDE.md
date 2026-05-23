@@ -506,20 +506,24 @@ CREATE TABLE debt_payments (
         modales para crear deuda y registrar abonos
 - [x] `App.jsx` — saveTxn / deleteTxn son async
 
-#### 6D — Migración de datos (pendiente para Phase 7)
-- [ ] Script `data/migrate_to_supabase.py`:
-  1. Lee transacciones históricas de Google Sheets
-  2. Mapea categorías de texto a UUIDs de Supabase
-  3. Inserta en `transactions` de Supabase
-  4. Verifica totales por mes
+#### 6D — Migración de datos ✅ COMPLETE
+- [x] Script `data/migrate_to_supabase.py`:
+  - Lee transacciones de Google Sheets vía `/api/transactions`
+  - Mapea 18 categorías Sheets → 16 categorías Supabase (CATEGORY_MAP dict)
+  - Skip automático de filas ya existentes (dedup por user+date+desc+amount)
+  - Manejo especial: amount=0 se omite (placeholders TC), amount<0 se convierte a income
+  - Resultado: 568 / 575 filas migradas (7 placeholders omitidos, 0 errores)
 
-### Phase 7 — Migración de datos + Agente IA con contexto Supabase ← NEXT
-*Migrar historial de Sheets a Supabase y actualizar el agente para usar Supabase como
-fuente de verdad única. Dashboard charts también migran de Sheets a Supabase.*
-- [ ] Script `data/migrate_to_supabase.py` — importar transacciones históricas de Sheets
-- [ ] Actualizar `agent/tools.py` para usar `db/queries.py` en vez de Sheets
-- [ ] Añadir herramienta `get_debt_summary` — saldos pendientes por deuda
-- [ ] Actualizar Dashboard charts para usar /api/transactions/db en vez de /api/budget + /api/trend
+### Phase 7 — Migración de datos + Agente IA con contexto Supabase ✅ COMPLETE
+*Supabase es la fuente de verdad única. Sheets sigue disponible solo como archivo histórico.*
+- [x] Script `data/migrate_to_supabase.py` — 568 transacciones históricas importadas
+- [x] `agent/tools.py` — reescrito para usar `db/queries.py` (Supabase, no Sheets)
+- [x] Añadir herramienta `get_debt_summary` — saldos pendientes por deuda
+- [x] `api/routes/summary.py` — nuevos endpoints `/api/summary/budget`, `/api/summary/trend`,
+      `/api/summary/expenses` para agregados del Dashboard desde Supabase
+- [x] `api/routes/users.py` — GET /api/users
+- [x] Dashboard.jsx — usa `/api/summary/budget` para presupuesto; transactions de AppContext
+      para KPIs, donut y tendencia; elimina dependencia de Sheets
 - [ ] Prompt del agente actualizado para contexto de deudas y splits
 - [ ] Test end-to-end: "¿Cuánto le debo a la tarjeta Visa?" → respuesta correcta
 
