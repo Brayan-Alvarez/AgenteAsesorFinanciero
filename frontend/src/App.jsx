@@ -142,15 +142,23 @@ function AppShell() {
   const openModal  = (txn = null) => setModal({ open: true, data: txn });
   const closeModal = ()           => setModal({ open: false, data: null });
 
-  const saveTxn = (data) => {
-    if (data.id) updateTransaction(data.id, data);
-    else addTransaction(data);
-    closeModal();
+  const saveTxn = async (data) => {
+    try {
+      if (data.id) await updateTransaction(data.id, data);
+      else await addTransaction(data);
+      closeModal();
+    } catch (err) {
+      console.error('Failed to save transaction:', err);
+    }
   };
 
-  const deleteTxn = () => {
-    deleteTransaction(modal.data.id);
-    closeModal();
+  const deleteTxn = async () => {
+    try {
+      await deleteTransaction(modal.data.id);
+      closeModal();
+    } catch (err) {
+      console.error('Failed to delete transaction:', err);
+    }
   };
 
   return (

@@ -1,98 +1,89 @@
 /**
  * AppContext.jsx — Global state for the financial app.
  *
- * Data sources:
- *   Real API (Google Sheets via FastAPI):
- *     - transactions  → GET /api/transactions  (individual rows, all months)
- *     - users/personas → GET /api/personas      (person names from PERSON_NAMES env)
- *     - budget summary → GET /api/budget        (annual planned vs actual)
- *     - trend          → GET /api/trend         (monthly totals)
- *     - expenses cache → GET /api/expenses      (category totals per month)
+ * Data sources (all Supabase via FastAPI):
+ *   - users         → GET /api/users
+ *   - categories    → GET /api/categories
+ *   - transactions  → GET /api/transactions/db  (current year)
  *
- *   In-memory CRUD:
- *     Transactions added/edited/deleted in the UI exist only in-memory —
- *     writing back to Google Sheets is not implemented yet (future Phase 5).
- *
- *   Seed budget (editable):
- *     The budget grid uses a monthly breakdown that the API doesn't expose
- *     (the Sheets budget is annual-only).  Seed values are used as defaults;
- *     edits persist only in-memory.
+ * Legacy Sheets data (still used by Dashboard charts until Phase 7):
+ *   - apiBudget     → GET /api/budget
+ *   - apiTrend      → GET /api/trend
+ *   - expensesCache → GET /api/expenses
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { getBudget, getExpenses, getPersonas, getTransactions, getTrend } from '../api/client.js';
-import { generateBudget } from '../data/seed.js';
+import {
+  getBudget, getExpenses, getTrend,
+  getUsers, getCategories,
+  getTransactionsDb, createTransactionDb, updateTransactionDb, deleteTransactionDb,
+} from '../api/client.js';
 
 const AppContext = createContext(null);
-
-// Avatar colors assigned in order to each person loaded from the API.
-const PERSONA_COLORS = ['#6366f1', '#ec4899', '#34d399', '#f59e0b'];
 
 const INITIAL_CHAT = [
   { role: 'agent', text: '¡Hola! Soy tu asesor financiero personal. ¿En qué te puedo ayudar hoy?' },
 ];
 
-// ---------------------------------------------------------------------------
-// Map an API transaction item → frontend Transaction shape
-// ---------------------------------------------------------------------------
-function mapApiTxn(item) {
+// Map Supabase transaction shape → internal frontend shape
+function mapTxn(item, categories = [], users = []) {
+  const cat  = categories.find(c => c.id === item.category_id);
+  const user = users.find(u => u.id === item.user_id) ?? item.users;
   return {
-    id:       item.id,
-    userId:   item.persona.toLowerCase(),       // "Belmont" → "belmont"
-    date:     item.fecha,                        // "YYYY-MM-DD"
-    desc:     item.descripcion,
-    category: item.categoria,                   // Real label from sheet (e.g. "Almuerzos normales")
-    amount:   item.monto,
-    type:     item.tipo === 'ingreso' ? 'income' : 'expense',
+    id:            item.id,
+    userId:        item.user_id,
+    date:          item.date,
+    desc:          item.description,
+    category:      item.categories?.name ?? cat?.name ?? '',
+    categoryId:    item.category_id,
+    subcategoryId: item.subcategory_id,
+    amount:        item.amount,
+    type:          item.type,
+    notes:         item.notes ?? null,
+    user,
   };
 }
 
 export function AppProvider({ children }) {
-  // ── Real transactions (from Sheets via API) ─────────────────────────────
-  const [transactions,    setTransactions]    = useState([]);
-  const [isLoadingTxns,   setIsLoadingTxns]   = useState(true);
-  const [txnsError,       setTxnsError]       = useState(null);
+  // ── Supabase data ────────────────────────────────────────────────────────
+  const [users,         setUsers]         = useState([]);
+  const [categories,    setCategories]    = useState([]);
+  const [transactions,  setTransactions]  = useState([]);
+  const [isLoadingTxns, setIsLoadingTxns] = useState(true);
+  const [txnsError,     setTxnsError]     = useState(null);
 
-  // ── Dynamic users (from PERSON_NAMES env via API) ───────────────────────
-  const [users,           setUsers]           = useState([]);
+  // ── UI filter ─────────────────────────────────────────────────────────────
+  const [userFilter, setUserFilter] = useState('all');
 
-  // ── Seed budget (editable monthly breakdown) ────────────────────────────
-  const [budget,          setBudget]          = useState(() => generateBudget());
+  // ── Legacy Sheets aggregated data (Dashboard charts) ─────────────────────
+  const [apiBudget,     setApiBudget]     = useState(null);
+  const [apiTrend,      setApiTrend]      = useState(null);
+  const [expensesCache, setExpensesCache] = useState({});
+  const [isLoadingApi,  setIsLoadingApi]  = useState(true);
+  const [apiError,      setApiError]      = useState(null);
 
-  // ── UI filter ───────────────────────────────────────────────────────────
-  const [userFilter,      setUserFilter]      = useState('all');
-
-  // ── Real API aggregated data ────────────────────────────────────────────
-  const [apiBudget,       setApiBudget]       = useState(null);
-  const [apiTrend,        setApiTrend]        = useState(null);
-  const [expensesCache,   setExpensesCache]   = useState({});
-  const [isLoadingApi,    setIsLoadingApi]    = useState(true);
-  const [apiError,        setApiError]        = useState(null);
-
-  // ── Chat history ────────────────────────────────────────────────────────
+  // ── Chat history ──────────────────────────────────────────────────────────
   const [chatHistory, setChatHistory] = useState(INITIAL_CHAT);
 
-  // ── Load everything on mount ─────────────────────────────────────────────
+  // ── Load everything on mount ──────────────────────────────────────────────
   useEffect(() => {
-    // Transactions + personas in parallel
-    Promise.all([getTransactions(), getPersonas()])
-      .then(([txnData, personaData]) => {
-        setTransactions(txnData.transactions.map(mapApiTxn));
+    const year = new Date().getFullYear();
 
-        // Build dynamic USERS array with assigned colors
-        const loadedUsers = personaData.personas.map((p, i) => ({
-          id:     p.id,
-          nombre: p.nombre,
-          name:   p.nombre,
-          avatar: p.nombre.charAt(0).toUpperCase(),
-          color:  PERSONA_COLORS[i % PERSONA_COLORS.length],
-        }));
-        setUsers(loadedUsers);
+    // Users + categories (needed before mapping transactions)
+    Promise.all([getUsers(), getCategories()])
+      .then(([usersData, catsData]) => {
+        setUsers(usersData);
+        setCategories(catsData);
+
+        // Load transactions after we have categories + users for mapping
+        return getTransactionsDb({ year }).then(txns => {
+          setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
+        });
       })
       .catch(err => setTxnsError(err.message))
       .finally(() => setIsLoadingTxns(false));
 
-    // Budget summary + trend in parallel (separate from above so either can fail independently)
+    // Legacy Sheets data for Dashboard charts — independent, can fail separately
     Promise.all([getBudget(), getTrend()])
       .then(([b, t]) => {
         setApiBudget(b.categories);
@@ -102,7 +93,7 @@ export function AppProvider({ children }) {
       .finally(() => setIsLoadingApi(false));
   }, []);
 
-  // Lazy-fetch expense category totals per month/person (for donut chart API data)
+  // Lazy-fetch expense category totals per month/person (Dashboard donut)
   const fetchExpenses = useCallback(async (month, person = null) => {
     const key = `${month}|${person ?? 'all'}`;
     if (expensesCache[key] !== undefined) return expensesCache[key];
@@ -111,56 +102,69 @@ export function AppProvider({ children }) {
     return data.items;
   }, [expensesCache]);
 
-  // ── Transaction CRUD (in-memory only — not persisted to Sheets) ──────────
-  const addTransaction = useCallback((txn) => {
-    setTransactions(prev => {
-      const newId = prev.length > 0 ? Math.max(...prev.map(t => t.id)) + 1 : 1;
-      return [{ ...txn, id: newId }, ...prev]
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
+  // ── Transaction CRUD (hits real Supabase via API) ─────────────────────────
+
+  const addTransaction = useCallback(async (txn) => {
+    const created = await createTransactionDb({
+      user_id:        txn.userId,
+      date:           txn.date,
+      category_id:    txn.categoryId,
+      subcategory_id: txn.subcategoryId ?? null,
+      description:    txn.desc,
+      amount:         Number(txn.amount),
+      type:           txn.type,
+      notes:          txn.notes ?? null,
     });
-  }, []);
+    setTransactions(prev =>
+      [mapTxn(created, categories, users), ...prev]
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+    );
+  }, [categories, users]);
 
-  const updateTransaction = useCallback((id, txn) => {
-    setTransactions(prev => prev.map(t => t.id === id ? { ...txn, id } : t));
-  }, []);
+  const updateTransaction = useCallback(async (id, txn) => {
+    const updated = await updateTransactionDb(id, {
+      user_id:        txn.userId,
+      date:           txn.date,
+      category_id:    txn.categoryId,
+      subcategory_id: txn.subcategoryId ?? null,
+      description:    txn.desc,
+      amount:         Number(txn.amount),
+      type:           txn.type,
+      notes:          txn.notes ?? null,
+    });
+    setTransactions(prev => prev.map(t => t.id === id ? mapTxn(updated, categories, users) : t));
+  }, [categories, users]);
 
-  const deleteTransaction = useCallback((id) => {
+  const deleteTransaction = useCallback(async (id) => {
+    await deleteTransactionDb(id);
     setTransactions(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  // ── Budget CRUD (in-memory only) ─────────────────────────────────────────
-  const updateBudget = useCallback((catId, month, value) => {
-    setBudget(prev => ({
-      ...prev,
-      [catId]: { ...prev[catId], [month]: Number(value) || 0 },
-    }));
-  }, []);
-
-  // ── Derived helpers ──────────────────────────────────────────────────────
+  // ── Derived helpers ───────────────────────────────────────────────────────
   const getUser = useCallback((id) => users.find(u => u.id === id), [users]);
 
   const value = useMemo(() => ({
-    // Real transactions
+    // Supabase data
+    users,
+    categories,
     transactions,
     isLoadingTxns,
     txnsError,
-
-    // Dynamic users
-    users,
     getUser,
 
-    // Budget + filter
-    budget,
+    // Kept for backward-compat (Recommendations.jsx) — empty until Phase 7
+    budget: {},
+
+    // UI filter
     userFilter,
     setUserFilter,
-    updateBudget,
 
     // Transaction CRUD
     addTransaction,
     updateTransaction,
     deleteTransaction,
 
-    // Real API aggregated data
+    // Legacy Sheets data (Dashboard)
     apiBudget,
     apiTrend,
     expensesCache,
@@ -172,12 +176,11 @@ export function AppProvider({ children }) {
     chatHistory,
     setChatHistory,
   }), [
-    transactions, isLoadingTxns, txnsError,
-    users, getUser,
-    budget, userFilter,
+    users, categories, transactions, isLoadingTxns, txnsError, getUser,
+    userFilter,
+    addTransaction, updateTransaction, deleteTransaction,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
-    addTransaction, updateTransaction, deleteTransaction, updateBudget,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

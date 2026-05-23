@@ -34,6 +34,7 @@ from api.routes.categories import router as categories_router
 from api.routes.budget import router as budget_router
 from api.routes.transactions_db import router as transactions_db_router
 from api.routes.debts import router as debts_router
+from api.routes.users import router as users_router
 
 # Load .env before anything else so that FRONTEND_ORIGIN and all other
 # config variables are available when the app starts.
@@ -92,6 +93,7 @@ app.include_router(categories_router,     prefix="/api", tags=["categories"])
 app.include_router(budget_router,         prefix="/api", tags=["budget"])
 app.include_router(transactions_db_router,prefix="/api", tags=["transactions-db"])
 app.include_router(debts_router,          prefix="/api", tags=["debts"])
+app.include_router(users_router,          prefix="/api", tags=["users"])
 
 
 # ---------------------------------------------------------------------------

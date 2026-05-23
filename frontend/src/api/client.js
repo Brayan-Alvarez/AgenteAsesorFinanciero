@@ -14,139 +14,137 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const api = axios.create({
   baseURL: BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  headers: { "Content-Type": "application/json" },
 });
 
-/**
- * Send a natural-language message to the financial advisor agent.
- *
- * The agent will call the appropriate tools (budget summary, expenses, etc.)
- * internally and return a plain-text reply in the same language as the message.
- *
- * @param {string} message - The user's question or request.
- * @returns {Promise<{ reply: string }>} The agent's text response.
- * @throws {Error} If the request fails or the server returns an error.
- */
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
 export async function sendMessage(message) {
-  try {
-    const response = await api.post("/api/chat", { message });
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? "No se pudo conectar con el agente. Intenta de nuevo."
-    );
-  }
+  const response = await api.post("/api/chat", { message });
+  return response.data;
 }
 
-/**
- * Fetch planned vs actual spending for every budget category for the current year.
- *
- * Useful for rendering a bar chart that compares what was budgeted against
- * what has actually been spent in each category.
- *
- * @returns {Promise<{ categories: Array<{ name: string, planned: number, actual: number, remaining: number, pct_used: number }> }>}
- * @throws {Error} If the request fails or the server returns an error.
- */
+// ── Legacy Sheets endpoints (still used by Dashboard charts) ─────────────────
+
 export async function getBudget() {
-  try {
-    const response = await api.get("/api/budget");
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? "No se pudo cargar el presupuesto."
-    );
-  }
+  const response = await api.get("/api/budget");
+  return response.data;
 }
 
-/**
- * Fetch expenses aggregated by category for a specific month.
- *
- * Results are sorted largest-first. Pass a person name to narrow the results
- * to a single person; omit it to get combined expenses for both people.
- *
- * @param {string} month  - Spanish month name, e.g. "Enero", "Marzo".
- * @param {string|null} person - Person name as it appears in the Sheets headers
- *                               (e.g. "Sofi", "Belmont"). Null for combined.
- * @returns {Promise<{ month: string, person: string|null, items: Array<{ category: string, total: number }> }>}
- * @throws {Error} If the request fails or the server returns an error.
- */
 export async function getExpenses(month, person = null) {
-  try {
-    const params = { month };
-    if (person !== null) params.person = person;
-
-    const response = await api.get("/api/expenses", { params });
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? `No se pudieron cargar los gastos de ${month}.`
-    );
-  }
+  const params = { month };
+  if (person !== null) params.person = person;
+  const response = await api.get("/api/expenses", { params });
+  return response.data;
 }
 
-/**
- * Fetch total spending per month in calendar order (Enero → Diciembre).
- *
- * Only months that have at least one recorded expense are included.
- * Useful for rendering a line chart of spending evolution throughout the year.
- *
- * @returns {Promise<{ trend: Array<{ month: string, total: number }> }>}
- * @throws {Error} If the request fails or the server returns an error.
- */
 export async function getTrend() {
-  try {
-    const response = await api.get("/api/trend");
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? "No se pudo cargar la tendencia mensual."
-    );
-  }
+  const response = await api.get("/api/trend");
+  return response.data;
 }
 
-/**
- * Fetch all individual transaction rows from Google Sheets.
- *
- * Optionally filter by month and/or person to reduce the payload.
- * The `tipo` field is 'ingreso' or 'gasto'; `fecha` is 'YYYY-MM-DD'.
- *
- * @param {string|null} month  - Spanish month name, e.g. "Mayo". Null for all months.
- * @param {string|null} person - Person name as in tab headers. Null for all people.
- * @returns {Promise<{ transactions: Array<{ id, fecha, categoria, descripcion, monto, persona, mes, tipo }> }>}
- * @throws {Error} If the request fails or the server returns an error.
- */
-export async function getTransactions(month = null, person = null) {
-  try {
-    const params = {};
-    if (month)  params.month  = month;
-    if (person) params.person = person;
-    const response = await api.get("/api/transactions", { params });
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? "No se pudieron cargar las transacciones."
-    );
-  }
+// ── Supabase — Users ──────────────────────────────────────────────────────────
+
+export async function getUsers() {
+  const response = await api.get("/api/users");
+  return response.data;
 }
 
-/**
- * Fetch the list of persons tracked in the household.
- *
- * Returns display names (as in sheet tab headers) and their lowercase IDs
- * for use as filter keys in the frontend.
- *
- * @returns {Promise<{ personas: Array<{ id: string, nombre: string }> }>}
- * @throws {Error} If the request fails or the server returns an error.
- */
-export async function getPersonas() {
-  try {
-    const response = await api.get("/api/personas");
-    return response.data;
-  } catch (error) {
-    throw new Error(
-      error.response?.data?.detail ?? "No se pudieron cargar los usuarios."
-    );
-  }
+// ── Supabase — Categories ─────────────────────────────────────────────────────
+
+export async function getCategories() {
+  const response = await api.get("/api/categories");
+  return response.data;
+}
+
+export async function createCategory(data) {
+  const response = await api.post("/api/categories", data);
+  return response.data;
+}
+
+export async function updateCategory(id, data) {
+  const response = await api.put(`/api/categories/${id}`, data);
+  return response.data;
+}
+
+export async function deleteCategory(id) {
+  await api.delete(`/api/categories/${id}`);
+}
+
+// ── Supabase — Budget ─────────────────────────────────────────────────────────
+
+export async function getBudgetSupabase(year, month, userId = null) {
+  const params = { year, month };
+  if (userId) params.user_id = userId;
+  const response = await api.get("/api/budget/supabase", { params });
+  return response.data;
+}
+
+export async function upsertBudget(data) {
+  const response = await api.post("/api/budget/supabase", data);
+  return response.data;
+}
+
+export async function deleteBudget(id) {
+  await api.delete(`/api/budget/supabase/${id}`);
+}
+
+export async function getBudgetHistory(categoryId, userId) {
+  const response = await api.get("/api/budget/history", {
+    params: { category_id: categoryId, user_id: userId },
+  });
+  return response.data;
+}
+
+// ── Supabase — Transactions ───────────────────────────────────────────────────
+
+export async function getTransactionsDb(params = {}) {
+  const response = await api.get("/api/transactions/db", { params });
+  return response.data;
+}
+
+export async function createTransactionDb(data) {
+  const response = await api.post("/api/transactions/db", data);
+  return response.data;
+}
+
+export async function updateTransactionDb(id, data) {
+  const response = await api.put(`/api/transactions/db/${id}`, data);
+  return response.data;
+}
+
+export async function deleteTransactionDb(id) {
+  await api.delete(`/api/transactions/db/${id}`);
+}
+
+// ── Supabase — Debts ──────────────────────────────────────────────────────────
+
+export async function getDebts(userId = null) {
+  const params = {};
+  if (userId) params.user_id = userId;
+  const response = await api.get("/api/debts", { params });
+  return response.data;
+}
+
+export async function createDebt(data) {
+  const response = await api.post("/api/debts", data);
+  return response.data;
+}
+
+export async function updateDebt(id, data) {
+  const response = await api.put(`/api/debts/${id}`, data);
+  return response.data;
+}
+
+export async function deleteDebt(id) {
+  await api.delete(`/api/debts/${id}`);
+}
+
+export async function addDebtPayment(debtId, data) {
+  const response = await api.post(`/api/debts/${debtId}/payments`, data);
+  return response.data;
+}
+
+export async function deleteDebtPayment(paymentId) {
+  await api.delete(`/api/debt-payments/${paymentId}`);
 }

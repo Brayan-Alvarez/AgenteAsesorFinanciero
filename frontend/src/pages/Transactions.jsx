@@ -1,24 +1,23 @@
 /**
  * Transactions.jsx — Lista completa de transacciones filtrable por mes, usuario y categoría.
- * Datos: seed transactions del AppContext (CRUD interactivo).
+ * Datos: Supabase vía AppContext (CRUD real contra /api/transactions/db).
  */
 
 import { useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
-import { CATEGORIES, getCat } from '../data/categories.js';
 import { filterTxns } from '../data/seed.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
 import MonthNav from '../components/MonthNav.jsx';
 import UserToggle from '../components/UserToggle.jsx';
 
-const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-const DAYS_SHORT   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const MONTHS_LONG = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const DAYS_SHORT  = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 
 export default function Transactions({ openTxnForm }) {
-  const { transactions, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
+  const { transactions, categories, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
 
   const now = new Date();
   const [year,      setYear]      = useState(now.getFullYear());
@@ -29,12 +28,12 @@ export default function Transactions({ openTxnForm }) {
   const txns = useMemo(() => {
     let list = filterTxns(transactions, userFilter, year, month);
     if (search)           list = list.filter(t => t.desc.toLowerCase().includes(search.toLowerCase()));
-    if (catFilter !== 'all') list = list.filter(t => t.category === catFilter);
+    if (catFilter !== 'all') list = list.filter(t => t.categoryId === catFilter);
     return list;
   }, [transactions, userFilter, year, month, search, catFilter]);
 
   const totalExpense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const totalIncome  = txns.filter(t => t.type === 'income' && t.category === 'ingreso').reduce((s, t) => s + t.amount, 0);
+  const totalIncome  = txns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
 
   // Group by date descending
   const grouped = useMemo(() => {
@@ -107,8 +106,8 @@ export default function Transactions({ openTxnForm }) {
           onChange={e => setCatFilter(e.target.value)}
         >
           <option value="all">Todas las categorías</option>
-          {CATEGORIES.map(c => (
-            <option key={c.id} value={c.id}>{c.icon} {c.label}</option>
+          {categories.map(c => (
+            <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
           ))}
         </select>
       </div>
@@ -142,8 +141,9 @@ export default function Transactions({ openTxnForm }) {
               <table>
                 <tbody>
                   {list.map(t => {
-                    const u   = getUser(t.userId);
-                    const cat = getCat(t.category);
+                    const u   = getUser(t.userId) ?? t.user;
+                    const cat = categories.find(c => c.id === t.categoryId)
+                             ?? { name: t.category, icon: '📦', color: '#94a3b8' };
                     return (
                       <tr key={t.id} onClick={() => openTxnForm(t)} style={{ cursor: 'pointer' }}>
                         <td style={{ width: 52 }}>
@@ -157,7 +157,7 @@ export default function Transactions({ openTxnForm }) {
                         </td>
                         <td>
                           <div style={{ fontWeight: 500 }}>{t.desc}</div>
-                          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{cat.label}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{cat.name}</div>
                         </td>
                         <td>
                           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 13, color: 'var(--text-dim)' }}>
