@@ -274,20 +274,23 @@ class AgentState(TypedDict):
 ### Implemented ✓
 ```
 POST /api/chat                              → LangGraph agent
-GET  /api/budget                            → budget summary by category
-GET  /api/expenses?month=&person=           → filtered expenses
-GET  /api/trend                             → monthly totals
-GET  /api/personas                          → list of users
-```
+GET  /api/budget                            → budget summary (Sheets, legacy — Dashboard)
+GET  /api/expenses?month=&person=           → filtered expenses (Sheets, legacy)
+GET  /api/trend                             → monthly totals (Sheets, legacy)
+GET  /api/personas                          → list of users (Sheets, legacy)
 
-### To implement (Phase 6)
-```
-GET    /api/transactions?month=&year=&user_id=&category=
-POST   /api/transactions
-PUT    /api/transactions/{id}
-DELETE /api/transactions/{id}
-GET    /api/budget/monthly
-PUT    /api/budget
+GET  /api/users                             → Supabase users
+GET/POST/PUT/DELETE /api/categories         → categories CRUD
+POST/DELETE         /api/categories/{id}/subcategories
+PUT/DELETE          /api/subcategories/{id}
+GET  /api/budget/supabase                   → per-user monthly budget rows
+POST /api/budget/supabase                   → upsert budget (create or update)
+DELETE /api/budget/supabase/{id}
+GET  /api/budget/history                    → budget change audit log
+GET/POST/PUT/DELETE /api/transactions/db    → Supabase transactions CRUD
+GET/POST/PUT/DELETE /api/debts              → debts CRUD
+POST   /api/debts/{id}/payments             → register payment
+DELETE /api/debt-payments/{id}              → remove payment
 ```
 
 ---
@@ -354,12 +357,12 @@ PUT    /api/budget
 - [x] fix: normalize Gemini 2.5+ content blocks to string — ChatResponse now stable with all model versions
 - [x] Smoke test full app: charts load from Sheets, chat responds with real financial data
 
-### Phase 6 — Supabase + Sistema de Presupuesto ← CURRENT
+### Phase 6 — Supabase + Sistema de Presupuesto ✅ COMPLETE
 *Se elimina la dependencia de Google Sheets para escritura. Supabase es la fuente de verdad
 para categorías, presupuesto, deudas y transacciones. Los Sheets siguen usándose solo para
-importar el historial inicial de transacciones.*
+Dashboard charts (legacy) hasta Phase 7.*
 
-#### 6A — Base de datos Supabase
+#### 6A — Base de datos Supabase ✅
 
 **Modelo de datos completo:**
 
@@ -475,80 +478,49 @@ CREATE TABLE debt_payments (
 - Las deudas se muestran en la vista de Presupuesto con pestaña separada
 - Una deuda pagada (saldo = 0) cambia automáticamente a `status = 'paid'`
 
-#### 6B — Backend (FastAPI + Supabase)
+#### 6B — Backend (FastAPI + Supabase) ✅
+- [x] Crear proyecto en supabase.com y ejecutar el schema SQL
+- [x] Seed inicial: usuarios (Belmont #6366f1, Sofi #ec4899) + 16 categorías base en Supabase
+- [x] Añadir `supabase==2.30.0` a requirements.txt
+- [x] `db/client.py` — cliente Supabase singleton (SUPABASE_URL + SUPABASE_SERVICE_KEY)
+- [x] `db/queries.py` — todas las queries centralizadas: users, categories+subcategories,
+      budget+history, transactions, debts+payments (con pending_amount computado)
+- [x] `api/routes/users.py` — GET /api/users
+- [x] `api/routes/categories.py` — CRUD completo categories + subcategories
+- [x] `api/routes/budget.py` — GET/POST /api/budget/supabase + GET /api/budget/history
+- [x] `api/routes/transactions_db.py` — CRUD /api/transactions/db
+- [x] `api/routes/debts.py` — CRUD debts + payments
+- [x] SUPABASE_URL + SUPABASE_SERVICE_KEY configurados en Railway
 
-- [ ] Crear proyecto en supabase.com y ejecutar el schema SQL anterior
-- [ ] Seed inicial: insertar usuarios (Belmont, Sofi) y categorías base en Supabase
-- [ ] Importar historial de transacciones desde Google Sheets → Supabase (script de migración)
-- [ ] Añadir `supabase-py` a requirements.txt
-- [ ] `db/client.py` — cliente Supabase singleton (lee SUPABASE_URL + SUPABASE_SERVICE_KEY)
-- [ ] `db/queries.py` — todas las queries centralizadas:
-  - categorías CRUD + subcategorías CRUD
-  - presupuesto CRUD + splits + historial
-  - transacciones CRUD
-  - deudas CRUD + abonos CRUD
-- [ ] Nuevos endpoints:
-  ```
-  GET/POST        /api/categories
-  PUT/DELETE      /api/categories/{id}
-  POST            /api/categories/{id}/subcategories
-  DELETE          /api/subcategories/{id}
+#### 6C — Frontend ✅
+- [x] `api/client.js` — funciones Supabase: getUsers, getCategories, getBudgetSupabase,
+      upsertBudget, getDebts, createDebt, addDebtPayment, getTransactionsDb, CRUD completo
+- [x] `AppContext.jsx` — carga users + categories + transactions desde Supabase;
+      CRUD real y async contra API; `budget: {}` para compatibilidad con Recommendations
+- [x] `TxnForm.jsx` — selector de categoría desde Supabase (UUID-based) + subcategorías + notas
+- [x] `Transactions.jsx` — filtro de categoría usa UUID de Supabase; display usa categoryId
+- [x] `Budget.jsx` — rediseño completo:
+      · Pestaña Presupuesto: lista categorías con edición inline por usuario, barra de progreso,
+        vista Pareja muestra contribución de cada usuario
+      · Pestaña Deudas: cards con progreso, historial de abonos expandible,
+        modales para crear deuda y registrar abonos
+- [x] `App.jsx` — saveTxn / deleteTxn son async
 
-  GET/POST        /api/budget?year=&month=
-  PUT             /api/budget/{id}
-  GET             /api/budget/{id}/history
-  POST/PUT        /api/budget/{id}/splits
-
-  GET/POST        /api/transactions
-  PUT/DELETE      /api/transactions/{id}
-
-  GET/POST        /api/debts
-  PUT/DELETE      /api/debts/{id}
-  POST            /api/debts/{id}/payments
-  DELETE          /api/debt-payments/{id}
-  ```
-- [ ] Actualizar `agent/tools.py` para leer de Supabase en vez de Sheets
-
-#### 6C — Frontend
-
-**Vista Presupuesto (rediseño):**
-- Dos pestañas principales: `Presupuesto` | `Deudas`
-- **Pestaña Presupuesto:**
-  - Selector de mes/año
-  - Toggle usuario (Belmont / Sofi / Pareja)
-  - Lista de categorías con monto presupuestado, gastado y % usado
-  - Botón "+ Categoría" → modal para crear categoría (nombre, icono, color, tipo)
-  - Click en categoría → expande subcategorías + edición inline del monto
-  - Cada usuario edita su propio monto directamente (no hay configuración de split)
-  - En vista "Pareja": barra apilada mostrando el monto de cada uno y el % derivado;
-    si solo uno tiene presupuesto para esa categoría se muestra solo su aporte (100%)
-  - Ícono de historial por categoría → drawer con cambios anteriores
-- **Pestaña Deudas:**
-  - Cards por deuda: nombre, saldo pendiente, barra de progreso, próximo vencimiento
-  - Botón "Abonar" → modal con monto, fecha, quién paga, notas
-  - Botón "+ Deuda" → modal para crear deuda
-  - Toggle usuario: filtra por propietario o muestra todas (Pareja)
-  - Deuda pagada → card con estado "Pagada ✓" en verde, colapsable
-
-**Otras vistas afectadas:**
-- Transacciones → selector de categoría usa categorías de Supabase (no hardcodeadas)
-- TxnForm → CRUD real contra `/api/transactions`
-- AppContext → reemplaza seed data y Sheets cache con queries a Supabase endpoints
-
-#### 6D — Migración de datos
+#### 6D — Migración de datos (pendiente para Phase 7)
 - [ ] Script `data/migrate_to_supabase.py`:
-  1. Lee todas las transacciones de Google Sheets
-  2. Mapea categorías de texto a UUIDs de la tabla `categories`
+  1. Lee transacciones históricas de Google Sheets
+  2. Mapea categorías de texto a UUIDs de Supabase
   3. Inserta en `transactions` de Supabase
-  4. Verifica que el total por mes coincida con los datos originales
+  4. Verifica totales por mes
 
-### Phase 7 — Agente IA con contexto Supabase
-*Una vez que toda la data está en Supabase, el agente puede responder con más precisión
-y el usuario puede hacer preguntas sobre deudas, splits de presupuesto, etc.*
-- [ ] Actualizar `agent/tools.py` para usar `db/queries.py`
+### Phase 7 — Migración de datos + Agente IA con contexto Supabase ← NEXT
+*Migrar historial de Sheets a Supabase y actualizar el agente para usar Supabase como
+fuente de verdad única. Dashboard charts también migran de Sheets a Supabase.*
+- [ ] Script `data/migrate_to_supabase.py` — importar transacciones históricas de Sheets
+- [ ] Actualizar `agent/tools.py` para usar `db/queries.py` en vez de Sheets
 - [ ] Añadir herramienta `get_debt_summary` — saldos pendientes por deuda
-- [ ] Añadir herramienta `get_budget_splits` — distribución por usuario
-- [ ] Prompt actualizado para incluir contexto de deudas y splits
+- [ ] Actualizar Dashboard charts para usar /api/transactions/db en vez de /api/budget + /api/trend
+- [ ] Prompt del agente actualizado para contexto de deudas y splits
 - [ ] Test end-to-end: "¿Cuánto le debo a la tarjeta Visa?" → respuesta correcta
 
 ---
