@@ -2,8 +2,8 @@
  * Budget.jsx — Presupuesto mensual por categoría + gestión de deudas.
  *
  * Pestañas:
- *   "Presupuesto" — Lista de categorías con monto presupuestado y gastado.
- *                   Edición inline por usuario. Vista Pareja suma ambos montos.
+ *   "Presupuesto" — Lista de categorías activas con monto y gasto.
+ *                   Crear / eliminar categorías y subcategorías.
  *   "Deudas"      — Cards de deudas con abonos y barra de progreso.
  */
 
@@ -15,21 +15,23 @@ import { filterTxns } from '../data/seed.js';
 import {
   getBudgetSupabase, upsertBudget,
   getDebts, createDebt, deleteDebt, addDebtPayment, deleteDebtPayment,
+  createCategory, deleteCategory, createSubcategory, deleteSubcategory,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
+import EmojiPicker from '../components/EmojiPicker.jsx';
 import MonthNav from '../components/MonthNav.jsx';
 import UserToggle from '../components/UserToggle.jsx';
 import Modal from '../components/Modal.jsx';
 
 const MONTHS_LONG = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-
 const DEBT_COLORS = ['#dc2626','#f97316','#eab308','#22c55e','#6366f1','#ec4899','#06b6d4'];
+const CAT_COLORS  = ['#f59e0b','#22c55e','#ef4444','#3b82f6','#14b8a6','#8b5cf6','#ec4899','#06b6d4','#84cc16','#94a3b8'];
 
-// ── Inline-editable budget amount cell ───────────────────────────────────────
+// ── Inline-editable budget cell ───────────────────────────────────────────────
 function BudgetCell({ categoryId, amount, editable, onSave }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal]         = useState(String(amount));
+  const [val,     setVal]     = useState(String(amount));
   const inputRef = useRef();
 
   useEffect(() => { if (!editing) setVal(String(amount)); }, [amount, editing]);
@@ -79,24 +81,149 @@ function BudgetCell({ categoryId, amount, editable, onSave }) {
   );
 }
 
+// ── Category creation form ────────────────────────────────────────────────────
+function CategoryForm({ currentMaxOrder, onSave, onCancel }) {
+  const [form, setForm] = useState({ icon: '📦', name: '', color: CAT_COLORS[0], type: 'variable' });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    onSave({ ...form, name: form.name.trim(), sort_order: currentMaxOrder + 1 });
+  };
+
+  return (
+    <form onSubmit={submit}>
+      <div className="field">
+        <label className="field-label">Icono</label>
+        <EmojiPicker value={form.icon} onChange={v => set('icon', v)} />
+      </div>
+
+      <div className="field">
+        <label className="field-label">Nombre</label>
+        <input
+          className="input"
+          value={form.name}
+          onChange={e => set('name', e.target.value)}
+          placeholder="Ej: Carro propio, Mascotas"
+          autoFocus
+          required
+        />
+      </div>
+
+      <div className="field">
+        <label className="field-label">Color</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {CAT_COLORS.map(c => (
+            <button
+              key={c} type="button" onClick={() => set('color', c)}
+              style={{
+                width: 28, height: 28, borderRadius: '50%', background: c,
+                border: 'none', cursor: 'pointer',
+                outline: form.color === c ? `3px solid ${c}` : '3px solid transparent',
+                outlineOffset: 2,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Tipo</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[['variable','Variable — gastos que cambian mes a mes'],
+            ['fixed',   'Fijo — monto constante cada mes']].map(([val, label]) => (
+            <button
+              key={val} type="button" className="btn"
+              style={{
+                flex: 1, justifyContent: 'center', fontSize: 13,
+                borderColor: form.type === val ? 'var(--primary)' : 'var(--border)',
+                background:  form.type === val ? 'var(--surface-2)' : 'var(--bg-2)',
+              }}
+              onClick={() => set('type', val)}
+            >
+              {form.type === val && <Check size={13} />} {val === 'variable' ? 'Variable' : 'Fijo'}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 4 }}>
+          {form.type === 'variable' ? 'Gastos que cambian mes a mes (comida, transporte...)' : 'Monto constante cada mes (arriendo, suscripciones...)'}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn primary"><Plus size={14} /> Crear categoría</button>
+      </div>
+    </form>
+  );
+}
+
+// ── Subcategory creation form ─────────────────────────────────────────────────
+function SubcategoryForm({ parentCat, onSave, onCancel }) {
+  const [form, setForm] = useState({ icon: '📦', name: '' });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    onSave({ ...form, name: form.name.trim() });
+  };
+
+  return (
+    <form onSubmit={submit}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        marginBottom: 16, padding: '10px 14px',
+        background: 'var(--bg-2)', borderRadius: 8, fontSize: 13,
+      }}>
+        <span style={{ fontSize: 20 }}>{parentCat.icon}</span>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Categoría padre</div>
+          <div style={{ fontWeight: 500 }}>{parentCat.name}</div>
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Icono</label>
+        <EmojiPicker value={form.icon} onChange={v => set('icon', v)} />
+      </div>
+
+      <div className="field">
+        <label className="field-label">Nombre de la subcategoría</label>
+        <input
+          className="input"
+          value={form.name}
+          onChange={e => set('name', e.target.value)}
+          placeholder="Ej: Mercado/supermercado, Rappi, Uber"
+          autoFocus
+          required
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn primary"><Plus size={14} /> Crear subcategoría</button>
+      </div>
+    </form>
+  );
+}
+
 // ── Debt card ─────────────────────────────────────────────────────────────────
 function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
   const [expanded, setExpanded] = useState(false);
-  const pct     = debt.total_amount > 0 ? ((debt.total_amount - debt.pending_amount) / debt.total_amount) * 100 : 0;
-  const isPaid  = debt.status === 'paid' || debt.pending_amount === 0;
-  const owner   = users.find(u => u.id === debt.user_id);
+  const pct    = debt.total_amount > 0 ? ((debt.total_amount - debt.pending_amount) / debt.total_amount) * 100 : 0;
+  const isPaid = debt.status === 'paid' || debt.pending_amount === 0;
+  const owner  = users.find(u => u.id === debt.user_id);
 
   return (
     <div className="card" style={{ borderLeft: `4px solid ${debt.color}`, padding: 0, overflow: 'hidden' }}>
       <div style={{ padding: '18px 20px' }}>
-        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 16 }}>{debt.name}</span>
-              {isPaid && (
-                <span className="pill up" style={{ fontSize: 11 }}>Pagada ✓</span>
-              )}
+              {isPaid && <span className="pill up" style={{ fontSize: 11 }}>Pagada ✓</span>}
             </div>
             {debt.description && (
               <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{debt.description}</div>
@@ -105,7 +232,6 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
           {owner && <Avatar user={owner} />}
         </div>
 
-        {/* Amounts */}
         <div style={{ display: 'flex', gap: 20, marginBottom: 10 }}>
           <div>
             <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pendiente</div>
@@ -121,30 +247,21 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
           </div>
         </div>
 
-        {/* Progress bar */}
         <div className="bar" style={{ marginBottom: 8 }}>
-          <div className="bar-fill" style={{
-            width: `${Math.min(pct, 100)}%`,
-            background: isPaid ? 'var(--green)' : debt.color,
-          }} />
+          <div className="bar-fill" style={{ width: `${Math.min(pct, 100)}%`, background: isPaid ? 'var(--green)' : debt.color }} />
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-mute)', display: 'flex', justifyContent: 'space-between', marginBottom: 14 }} className="mono">
           <span>{pct.toFixed(0)}% pagado</span>
           {debt.due_date && <span>Vence: {new Date(debt.due_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</span>}
         </div>
 
-        {/* Actions */}
         <div style={{ display: 'flex', gap: 8 }}>
           {!isPaid && (
             <button className="btn primary" style={{ fontSize: 13 }} onClick={() => onAddPayment(debt)}>
               <Plus size={14} /> Abonar
             </button>
           )}
-          <button
-            className="btn ghost"
-            style={{ fontSize: 13 }}
-            onClick={() => setExpanded(e => !e)}
-          >
+          <button className="btn ghost" style={{ fontSize: 13 }} onClick={() => setExpanded(e => !e)}>
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {(debt.debt_payments?.length ?? 0)} abonos
           </button>
@@ -154,7 +271,6 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
         </div>
       </div>
 
-      {/* Payment history */}
       {expanded && (
         <div style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-2)' }}>
           {(debt.debt_payments ?? []).length === 0 ? (
@@ -163,10 +279,7 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
             [...(debt.debt_payments ?? [])].sort((a, b) => b.date.localeCompare(a.date)).map(p => {
               const paidBy = users.find(u => u.id === p.paid_by);
               return (
-                <div key={p.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 20px', borderBottom: '1px solid var(--border)',
-                }}>
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)', minWidth: 90 }}>
                     +{fmt(p.amount, { compact: true })}
                   </span>
@@ -301,12 +414,7 @@ function DebtForm({ users, onSave, onCancel }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {DEBT_COLORS.map(c => (
             <button key={c} type="button" onClick={() => set('color', c)}
-              style={{
-                width: 28, height: 28, borderRadius: '50%', background: c, border: 'none', cursor: 'pointer',
-                outline: form.color === c ? `3px solid ${c}` : '3px solid transparent',
-                outlineOffset: 2,
-              }}
-            />
+              style={{ width: 28, height: 28, borderRadius: '50%', background: c, border: 'none', cursor: 'pointer', outline: form.color === c ? `3px solid ${c}` : '3px solid transparent', outlineOffset: 2 }} />
           ))}
         </div>
       </div>
@@ -327,33 +435,33 @@ function DebtForm({ users, onSave, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
-  const { users, categories, transactions, userFilter, setUserFilter } = useAppContext();
+  const { users, categories, transactions, userFilter, setUserFilter, reloadCategories } = useAppContext();
+
+  // Only show active categories in Budget
+  const activeCategories = useMemo(() => categories.filter(c => c.is_active !== false), [categories]);
 
   const now = new Date();
   const [tab,   setTab]   = useState('budget');
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
 
-  // Budget rows from Supabase
   const [budgetRows,    setBudgetRows]    = useState([]);
   const [budgetLoading, setBudgetLoading] = useState(false);
-
-  // Debts from Supabase
   const [debts,        setDebts]        = useState([]);
   const [debtsLoading, setDebtsLoading] = useState(false);
 
   // Modals
-  const [paymentTarget, setPaymentTarget] = useState(null); // debt object for payment modal
+  const [paymentTarget, setPaymentTarget] = useState(null);
   const [showDebtForm,  setShowDebtForm]  = useState(false);
+  const [showCatForm,   setShowCatForm]   = useState(false);
+  const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
 
   // ── Load budget ─────────────────────────────────────────────────────────────
   const loadBudget = useCallback(async () => {
     setBudgetLoading(true);
     try {
-      // For Pareja view, load all users' rows (no user_id filter)
       const userId = userFilter !== 'all' ? userFilter : null;
-      const rows = await getBudgetSupabase(year, month, userId);
-      setBudgetRows(rows);
+      setBudgetRows(await getBudgetSupabase(year, month, userId));
     } catch (err) {
       console.error('Failed to load budget:', err);
     } finally {
@@ -378,21 +486,16 @@ export default function Budget() {
 
   useEffect(() => { if (tab === 'debts') loadDebts(); }, [tab, loadDebts]);
 
-  // ── Spent per category this month (from AppContext transactions) ─────────────
+  // ── Spent per category (from AppContext) ─────────────────────────────────────
   const spentByCategory = useMemo(() => {
-    const monthTxns = filterTxns(transactions, userFilter, year, month)
-      .filter(t => t.type === 'expense');
+    const monthTxns = filterTxns(transactions, userFilter, year, month).filter(t => t.type === 'expense');
     const out = {};
-    monthTxns.forEach(t => {
-      out[t.categoryId] = (out[t.categoryId] ?? 0) + t.amount;
-    });
+    monthTxns.forEach(t => { out[t.categoryId] = (out[t.categoryId] ?? 0) + t.amount; });
     return out;
   }, [transactions, userFilter, year, month]);
 
-  // ── Budget lookup ────────────────────────────────────────────────────────────
   const budgetMap = useMemo(() => {
     if (userFilter === 'all') {
-      // Group by category, sum per user
       const map = {};
       budgetRows.forEach(row => {
         if (!map[row.category_id]) map[row.category_id] = { total: 0, byUser: {} };
@@ -401,70 +504,70 @@ export default function Budget() {
       });
       return map;
     }
-    // Individual: map category_id → amount
     const map = {};
     budgetRows.forEach(row => { map[row.category_id] = row.amount; });
     return map;
   }, [budgetRows, userFilter]);
 
-  function getBudgetAmount(catId) {
-    if (userFilter === 'all') return budgetMap[catId]?.total ?? 0;
-    return budgetMap[catId] ?? 0;
-  }
+  const getBudgetAmount = (catId) =>
+    userFilter === 'all' ? (budgetMap[catId]?.total ?? 0) : (budgetMap[catId] ?? 0);
 
-  // ── Budget totals ────────────────────────────────────────────────────────────
-  const totalBudget = useMemo(() => Object.values(budgetMap).reduce((s, v) => {
-    return s + (userFilter === 'all' ? v.total : v);
-  }, 0), [budgetMap, userFilter]);
+  const totalBudget = useMemo(() => Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0), [budgetMap, userFilter]);
+  const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
-  const totalSpent = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
-
-  // ── Upsert budget cell ───────────────────────────────────────────────────────
+  // ── Budget save ──────────────────────────────────────────────────────────────
   const handleBudgetSave = useCallback(async (categoryId, amount) => {
     if (userFilter === 'all') return;
     try {
       await upsertBudget({ category_id: categoryId, user_id: userFilter, year, month, amount });
       await loadBudget();
-    } catch (err) {
-      console.error('Failed to save budget:', err);
-    }
+    } catch (err) { console.error('Failed to save budget:', err); }
   }, [userFilter, year, month, loadBudget]);
 
+  // ── Category actions ─────────────────────────────────────────────────────────
+  const handleCreateCategory = async (data) => {
+    try {
+      await createCategory(data);
+      setShowCatForm(false);
+      await reloadCategories();
+    } catch (err) { console.error('Failed to create category:', err); }
+  };
+
+  const handleDeleteCategory = async (cat) => {
+    if (!confirm(`¿Desactivar la categoría "${cat.name}"?\n\nLas transacciones existentes conservan su categoría, pero ya no aparecerá como opción al crear nuevas.`)) return;
+    try {
+      await deleteCategory(cat.id);
+      await reloadCategories();
+    } catch (err) { console.error('Failed to delete category:', err); }
+  };
+
+  // ── Subcategory actions ──────────────────────────────────────────────────────
+  const handleCreateSubcategory = async (catId, data) => {
+    try {
+      await createSubcategory(catId, data);
+      setSubFormCat(null);
+      await reloadCategories();
+    } catch (err) { console.error('Failed to create subcategory:', err); }
+  };
+
+  const handleDeleteSubcategory = async (subId, subName) => {
+    if (!confirm(`¿Eliminar la subcategoría "${subName}"?\n\nLas transacciones que la tienen asignada no se ven afectadas.`)) return;
+    try {
+      await deleteSubcategory(subId);
+      await reloadCategories();
+    } catch (err) { console.error('Failed to delete subcategory:', err); }
+  };
+
   // ── Debt actions ─────────────────────────────────────────────────────────────
-  const handleCreateDebt = async (data) => {
-    try {
-      await createDebt(data);
-      setShowDebtForm(false);
-      await loadDebts();
-    } catch (err) { console.error(err); }
-  };
+  const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleDeleteDebt    = async (id)             => { if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return; try { await deleteDebt(id); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };
 
-  const handleDeleteDebt = async (id) => {
-    if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return;
-    try {
-      await deleteDebt(id);
-      await loadDebts();
-    } catch (err) { console.error(err); }
-  };
-
-  const handleAddPayment = async (debtId, data) => {
-    try {
-      await addDebtPayment(debtId, data);
-      setPaymentTarget(null);
-      await loadDebts();
-    } catch (err) { console.error(err); }
-  };
-
-  const handleDeletePayment = async (paymentId) => {
-    try {
-      await deleteDebtPayment(paymentId);
-      await loadDebts();
-    } catch (err) { console.error(err); }
-  };
-
-  // ── Derived debt totals ──────────────────────────────────────────────────────
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
-  const totalDebt    = debts.reduce((s, d) => s + d.total_amount,   0);
+  const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
+
+  const maxSortOrder = useMemo(() => Math.max(...categories.map(c => c.sort_order || 0), 0), [categories]);
 
   return (
     <div>
@@ -513,17 +616,20 @@ export default function Budget() {
 
           {/* Category list */}
           <div className="card flush">
-            {/* Header */}
+            {/* Header row */}
             <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 120px 120px 140px',
+              display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
               gap: 12, padding: '10px 20px',
               fontSize: 11, color: 'var(--text-mute)',
               textTransform: 'uppercase', letterSpacing: '0.06em',
-              borderBottom: '1px solid var(--border)',
-              background: 'var(--bg-2)',
+              borderBottom: '1px solid var(--border)', background: 'var(--bg-2)',
             }}>
-              <span>Categoría</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>Categoría</span>
+                <button className="btn" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => setShowCatForm(true)}>
+                  <Plus size={12} /> Nueva
+                </button>
+              </div>
               <span style={{ textAlign: 'right' }}>Presupuesto</span>
               <span style={{ textAlign: 'right' }}>Gastado</span>
               <span>Progreso</span>
@@ -531,92 +637,133 @@ export default function Budget() {
 
             {budgetLoading ? (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-mute)' }}>Cargando…</div>
-            ) : categories.length === 0 ? (
-              <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-mute)' }}>Sin categorías</div>
-            ) : categories.map(cat => {
+            ) : activeCategories.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-mute)' }}>
+                Sin categorías — crea la primera con el botón "Nueva"
+              </div>
+            ) : activeCategories.map(cat => {
               const budgeted = getBudgetAmount(cat.id);
               const spent    = spentByCategory[cat.id] ?? 0;
               const pct      = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 0;
               const over     = budgeted > 0 && spent > budgeted;
-
-              // For Pareja view, show each user's contribution
               const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
+              const activeSubs = (cat.subcategories || []).filter(s => s.is_active !== false);
 
               return (
-                <div key={cat.id} style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 120px 120px 140px',
-                  gap: 12, padding: '14px 20px',
-                  alignItems: 'center',
-                  borderBottom: '1px solid var(--border)',
-                }}>
-                  {/* Category name */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: 8,
-                      background: cat.color + '22', color: cat.color,
-                      display: 'grid', placeItems: 'center', fontSize: 15, flexShrink: 0,
-                    }}>
-                      {cat.icon}
+                <div key={cat.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  {/* Category row */}
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
+                    gap: 12, padding: '12px 20px', alignItems: 'center',
+                  }}>
+                    {/* Name + controls */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 8,
+                        background: cat.color + '22', color: cat.color,
+                        display: 'grid', placeItems: 'center', fontSize: 15, flexShrink: 0,
+                      }}>
+                        {cat.icon}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
+                        {byUser && Object.keys(byUser).length > 0 && (
+                          <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+                            {Object.entries(byUser).map(([uid, amt]) => {
+                              const u = users.find(u => u.id === uid);
+                              return u ? (
+                                <span key={uid} style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+                                  <span style={{ color: u.color }}>●</span> {u.name}: {fmt(amt, { compact: true })}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      {/* Action buttons */}
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        <button
+                          className="btn"
+                          style={{ padding: '3px 8px', fontSize: 11 }}
+                          title="Añadir subcategoría"
+                          onClick={() => setSubFormCat(cat)}
+                        >
+                          <Plus size={11} /> Sub
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ color: 'var(--text-mute)', padding: '3px 8px' }}
+                          title="Desactivar categoría"
+                          onClick={() => handleDeleteCategory(cat)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Budget cell */}
+                    <div style={{ textAlign: 'right' }}>
+                      <BudgetCell
+                        categoryId={cat.id}
+                        amount={budgeted}
+                        editable={userFilter !== 'all'}
+                        onSave={handleBudgetSave}
+                      />
+                    </div>
+
+                    {/* Spent */}
+                    <div style={{ textAlign: 'right' }}>
+                      <span className="mono" style={{ fontSize: 13, color: over ? 'var(--red)' : 'var(--text-dim)' }}>
+                        {spent > 0 ? fmt(spent, { compact: true }) : '—'}
+                      </span>
+                    </div>
+
+                    {/* Progress bar */}
                     <div>
-                      <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
-                      {byUser && Object.keys(byUser).length > 0 && (
-                        <div style={{ display: 'flex', gap: 8, marginTop: 3 }}>
-                          {Object.entries(byUser).map(([uid, amt]) => {
-                            const u = users.find(u => u.id === uid);
-                            return u ? (
-                              <span key={uid} style={{ fontSize: 11, color: 'var(--text-mute)' }}>
-                                <span style={{ color: u.color }}>●</span> {u.name}: {fmt(amt, { compact: true })}
-                              </span>
-                            ) : null;
-                          })}
-                        </div>
+                      {budgeted > 0 ? (
+                        <>
+                          <div className="bar" style={{ marginBottom: 4 }}>
+                            <div className="bar-fill" style={{
+                              width: `${pct}%`,
+                              background: over ? 'var(--red)' : pct > 85 ? 'var(--amber)' : `linear-gradient(90deg, ${cat.color}, ${cat.color}aa)`,
+                            }} />
+                          </div>
+                          <span style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)' }} className="mono">
+                            {pct.toFixed(0)}%
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>
+                          {userFilter === 'all' ? '—' : 'Click en presupuesto para agregar'}
+                        </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Budget amount (editable in individual view) */}
-                  <div style={{ textAlign: 'right' }}>
-                    <BudgetCell
-                      categoryId={cat.id}
-                      amount={budgeted}
-                      editable={userFilter !== 'all'}
-                      onSave={handleBudgetSave}
-                    />
-                  </div>
-
-                  {/* Spent */}
-                  <div style={{ textAlign: 'right' }}>
-                    <span className="mono" style={{ fontSize: 13, color: over ? 'var(--red)' : 'var(--text-dim)' }}>
-                      {spent > 0 ? fmt(spent, { compact: true }) : '—'}
-                    </span>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div>
-                    {budgeted > 0 ? (
-                      <>
-                        <div className="bar" style={{ marginBottom: 4 }}>
-                          <div className="bar-fill" style={{
-                            width: `${pct}%`,
-                            background: over
-                              ? 'var(--red)'
-                              : pct > 85
-                                ? 'var(--amber)'
-                                : `linear-gradient(90deg, ${cat.color}, ${cat.color}aa)`,
-                          }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)' }} className="mono">
-                          {pct.toFixed(0)}%
-                        </span>
-                      </>
-                    ) : (
-                      <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>
-                        {userFilter === 'all' ? '—' : 'Click en presupuesto para agregar'}
-                      </span>
-                    )}
-                  </div>
+                  {/* Subcategory rows (indented) */}
+                  {activeSubs.map(sub => (
+                    <div
+                      key={sub.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '6px 20px 6px 62px',
+                        background: 'var(--bg-2)',
+                        borderTop: '1px solid var(--border)',
+                        fontSize: 12, color: 'var(--text-dim)',
+                      }}
+                    >
+                      <span style={{ fontSize: 14 }}>{sub.icon || '·'}</span>
+                      <span style={{ flex: 1 }}>{sub.name}</span>
+                      <button
+                        className="btn"
+                        style={{ color: 'var(--text-mute)', padding: '2px 6px', fontSize: 11 }}
+                        title="Eliminar subcategoría"
+                        onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               );
             })}
@@ -633,7 +780,6 @@ export default function Budget() {
       {/* ── DEBTS TAB ─────────────────────────────────────────────────────────── */}
       {tab === 'debts' && (
         <>
-          {/* Debt KPIs */}
           <div className="grid grid-3" style={{ marginBottom: 20 }}>
             <div className="card">
               <div className="kpi-label">Deuda total</div>
@@ -653,14 +799,12 @@ export default function Budget() {
             </div>
           </div>
 
-          {/* Add debt button */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
             <button className="btn primary" onClick={() => setShowDebtForm(true)}>
               <Plus size={16} /> Nueva deuda
             </button>
           </div>
 
-          {/* Debt cards */}
           {debtsLoading ? (
             <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-mute)' }}>Cargando deudas…</div>
           ) : debts.length === 0 ? (
@@ -687,21 +831,30 @@ export default function Budget() {
       {/* ── Modals ───────────────────────────────────────────────────────────── */}
       <Modal open={!!paymentTarget} onClose={() => setPaymentTarget(null)} title="Registrar abono">
         {paymentTarget && (
-          <PaymentForm
-            debt={paymentTarget}
-            users={users}
-            onSave={handleAddPayment}
-            onCancel={() => setPaymentTarget(null)}
-          />
+          <PaymentForm debt={paymentTarget} users={users} onSave={handleAddPayment} onCancel={() => setPaymentTarget(null)} />
         )}
       </Modal>
 
       <Modal open={showDebtForm} onClose={() => setShowDebtForm(false)} title="Nueva deuda">
-        <DebtForm
-          users={users}
-          onSave={handleCreateDebt}
-          onCancel={() => setShowDebtForm(false)}
+        <DebtForm users={users} onSave={handleCreateDebt} onCancel={() => setShowDebtForm(false)} />
+      </Modal>
+
+      <Modal open={showCatForm} onClose={() => setShowCatForm(false)} title="Nueva categoría">
+        <CategoryForm
+          currentMaxOrder={maxSortOrder}
+          onSave={handleCreateCategory}
+          onCancel={() => setShowCatForm(false)}
         />
+      </Modal>
+
+      <Modal open={!!subFormCat} onClose={() => setSubFormCat(null)} title="Nueva subcategoría">
+        {subFormCat && (
+          <SubcategoryForm
+            parentCat={subFormCat}
+            onSave={(data) => handleCreateSubcategory(subFormCat.id, data)}
+            onCancel={() => setSubFormCat(null)}
+          />
+        )}
       </Modal>
     </div>
   );

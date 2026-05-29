@@ -2,12 +2,16 @@ import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext.jsx';
 import Avatar from './Avatar.jsx';
+import CategorySelector from './CategorySelector.jsx';
 
 export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
   const { users, categories } = useAppContext();
 
+  // Only active categories are offered when creating/editing a transaction
+  const activeCategories = categories.filter(c => c.is_active !== false);
+
   const today = new Date().toISOString().slice(0, 10);
-  const defaultCategoryId = categories[0]?.id ?? '';
+  const defaultCategoryId = activeCategories[0]?.id ?? '';
 
   const [form, setForm] = useState(() => {
     if (initial) {
@@ -37,18 +41,10 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isEdit = !!initial?.id;
 
-  // Subcategories for the selected category
-  const selectedCat = categories.find(c => c.id === form.categoryId);
-  const subcategories = selectedCat?.subcategories ?? [];
-
   const submit = (e) => {
     e.preventDefault();
     if (!form.desc || !form.amount) return;
-    onSave({
-      ...form,
-      id:     initial?.id,
-      amount: Number(form.amount),
-    });
+    onSave({ ...form, id: initial?.id, amount: Number(form.amount) });
   };
 
   return (
@@ -65,8 +61,7 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
                 onClick={() => set('userId', u.id)}
                 className="btn"
                 style={{
-                  flex: 1,
-                  justifyContent: 'center',
+                  flex: 1, justifyContent: 'center',
                   background: form.userId === u.id ? 'var(--surface-2)' : 'var(--bg-2)',
                   borderColor: form.userId === u.id ? u.color : 'var(--border)',
                 }}
@@ -79,8 +74,8 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
         <div className="field">
           <label className="field-label">Tipo</label>
           <div style={{ display: 'flex', gap: 8 }}>
-            {[['expense', 'Gasto', 'var(--red)', 'rgba(251,113,133,0.12)'],
-              ['income',  'Ingreso', 'var(--green)', 'rgba(52,211,153,0.12)']].map(([val, label, color, bg]) => (
+            {[['expense','Gasto','var(--red)','rgba(251,113,133,0.12)'],
+              ['income','Ingreso','var(--green)','rgba(52,211,153,0.12)']].map(([val, label, color, bg]) => (
               <button
                 key={val}
                 type="button"
@@ -139,40 +134,22 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
         </div>
       </div>
 
-      {/* Category */}
+      {/* Category + subcategory in a single grouped dropdown */}
       <div className="field">
         <label className="field-label">Categoría</label>
-        <select
-          className="select"
-          value={form.categoryId}
-          onChange={e => { set('categoryId', e.target.value); set('subcategoryId', null); }}
-        >
-          {categories.map(c => (
-            <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-          ))}
-        </select>
+        <CategorySelector
+          categories={activeCategories}
+          categoryId={form.categoryId}
+          subcategoryId={form.subcategoryId}
+          onChange={(catId, subId) => setForm(f => ({ ...f, categoryId: catId, subcategoryId: subId }))}
+        />
       </div>
-
-      {/* Subcategory (only if the selected category has subcategories) */}
-      {subcategories.length > 0 && (
-        <div className="field">
-          <label className="field-label">Subcategoría <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
-          <select
-            className="select"
-            value={form.subcategoryId ?? ''}
-            onChange={e => set('subcategoryId', e.target.value || null)}
-          >
-            <option value="">Sin subcategoría</option>
-            {subcategories.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {/* Notes */}
       <div className="field">
-        <label className="field-label">Notas <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
+        <label className="field-label">
+          Notas <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span>
+        </label>
         <input
           className="input"
           value={form.notes}

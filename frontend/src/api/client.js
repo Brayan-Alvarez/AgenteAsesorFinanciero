@@ -52,8 +52,9 @@ export async function getUsers() {
 
 // ── Supabase — Categories ─────────────────────────────────────────────────────
 
-export async function getCategories() {
-  const response = await api.get("/api/categories");
+export async function getCategories({ includeInactive = false } = {}) {
+  const params = includeInactive ? { include_inactive: true } : {};
+  const response = await api.get("/api/categories", { params });
   return response.data;
 }
 
@@ -69,6 +70,15 @@ export async function updateCategory(id, data) {
 
 export async function deleteCategory(id) {
   await api.delete(`/api/categories/${id}`);
+}
+
+export async function createSubcategory(categoryId, data) {
+  const response = await api.post(`/api/categories/${categoryId}/subcategories`, data);
+  return response.data;
+}
+
+export async function deleteSubcategory(id) {
+  await api.delete(`/api/subcategories/${id}`);
 }
 
 // ── Supabase — Budget ─────────────────────────────────────────────────────────

@@ -46,10 +46,21 @@ def get_user(user_id: str) -> dict | None:
 # CATEGORIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_categories() -> list[dict]:
-    """All categories ordered by sort_order, with their subcategories."""
-    cats = _sb().table("categories").select("*, subcategories(*)").order("sort_order").execute()
-    return cats.data
+def get_categories(include_inactive: bool = False) -> list[dict]:
+    """
+    All categories ordered by sort_order, with their subcategories.
+    By default returns only active categories (is_active = true).
+    Pass include_inactive=True to get everything (used by AppContext for display).
+    """
+    q = _sb().table("categories").select("*, subcategories(*)").order("sort_order")
+    if not include_inactive:
+        q = q.eq("is_active", True)
+    cats = q.execute().data
+    # Filter inactive subcategories when not requested
+    if not include_inactive:
+        for cat in cats:
+            cat["subcategories"] = [s for s in (cat.get("subcategories") or []) if s.get("is_active", True)]
+    return cats
 
 
 def get_category(category_id: str) -> dict | None:
@@ -74,15 +85,17 @@ def update_category(category_id: str, **fields) -> dict:
 
 
 def delete_category(category_id: str) -> None:
-    _sb().table("categories").delete().eq("id", category_id).execute()
+    # Soft delete: mark inactive so existing transactions keep their category reference.
+    _sb().table("categories").update({"is_active": False}).eq("id", category_id).execute()
 
 
 # ── Subcategories ─────────────────────────────────────────────────────────────
 
-def create_subcategory(category_id: str, name: str, sort_order: int = 0) -> dict:
+def create_subcategory(category_id: str, name: str, icon: str = "📦", sort_order: int = 0) -> dict:
     res = _sb().table("subcategories").insert({
         "category_id": category_id,
         "name": name,
+        "icon": icon,
         "sort_order": sort_order,
     }).execute()
     return res.data[0]
@@ -94,7 +107,8 @@ def update_subcategory(subcategory_id: str, **fields) -> dict:
 
 
 def delete_subcategory(subcategory_id: str) -> None:
-    _sb().table("subcategories").delete().eq("id", subcategory_id).execute()
+    # Soft delete: existing transactions that reference this subcategory keep their link.
+    _sb().table("subcategories").update({"is_active": False}).eq("id", subcategory_id).execute()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

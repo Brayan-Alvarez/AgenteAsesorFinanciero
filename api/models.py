@@ -157,7 +157,9 @@ class SubcategoryOut(BaseModel):
     id: str
     category_id: str
     name: str
+    icon: str = "📦"
     sort_order: int
+    is_active: bool = True
 
 class CategoryOut(BaseModel):
     id: str
@@ -166,6 +168,7 @@ class CategoryOut(BaseModel):
     color: str
     type: str
     sort_order: int
+    is_active: bool = True
     subcategories: list[SubcategoryOut] = []
 
 class CategoryCreate(BaseModel):
@@ -181,14 +184,18 @@ class CategoryUpdate(BaseModel):
     color: Optional[str] = None
     type: Optional[str] = None
     sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class SubcategoryCreate(BaseModel):
     name: str
+    icon: str = "📦"
     sort_order: int = 0
 
 class SubcategoryUpdate(BaseModel):
     name: Optional[str] = None
+    icon: Optional[str] = None
     sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------

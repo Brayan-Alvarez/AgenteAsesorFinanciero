@@ -11,7 +11,7 @@ DELETE /api/subcategories/{id}
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from api.models import CategoryCreate, CategoryOut, CategoryUpdate, SubcategoryCreate, SubcategoryUpdate
 import db.queries as q
 
@@ -20,9 +20,9 @@ router = APIRouter()
 
 
 @router.get("/categories", response_model=list[CategoryOut])
-async def list_categories():
+async def list_categories(include_inactive: bool = Query(False)):
     try:
-        return q.get_categories()
+        return q.get_categories(include_inactive=include_inactive)
     except Exception as exc:
         logger.exception("GET /api/categories failed.")
         raise HTTPException(500, "Could not load categories.") from exc
@@ -63,7 +63,7 @@ async def delete_category(category_id: str):
 @router.post("/categories/{category_id}/subcategories", status_code=201)
 async def create_subcategory(category_id: str, body: SubcategoryCreate):
     try:
-        return q.create_subcategory(category_id, body.name, body.sort_order)
+        return q.create_subcategory(category_id, body.name, body.icon, body.sort_order)
     except Exception as exc:
         logger.exception("POST /api/categories/%s/subcategories failed.", category_id)
         raise HTTPException(500, "Could not create subcategory.") from exc

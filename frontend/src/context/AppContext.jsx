@@ -69,8 +69,9 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const year = new Date().getFullYear();
 
-    // Users + categories (needed before mapping transactions)
-    Promise.all([getUsers(), getCategories()])
+    // Users + categories (needed before mapping transactions).
+    // Load ALL categories including inactive so existing transaction chips still show correctly.
+    Promise.all([getUsers(), getCategories({ includeInactive: true })])
       .then(([usersData, catsData]) => {
         setUsers(usersData);
         setCategories(catsData);
@@ -140,6 +141,16 @@ export function AppProvider({ children }) {
     setTransactions(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  // Re-fetch all categories (active + inactive) after create/delete in Budget.
+  const reloadCategories = useCallback(async () => {
+    try {
+      const catsData = await getCategories({ includeInactive: true });
+      setCategories(catsData);
+    } catch (err) {
+      console.error('Failed to reload categories:', err);
+    }
+  }, []);
+
   // ── Derived helpers ───────────────────────────────────────────────────────
   const getUser = useCallback((id) => users.find(u => u.id === id), [users]);
 
@@ -164,6 +175,9 @@ export function AppProvider({ children }) {
     updateTransaction,
     deleteTransaction,
 
+    // Category management
+    reloadCategories,
+
     // Legacy Sheets data (Dashboard)
     apiBudget,
     apiTrend,
@@ -178,7 +192,7 @@ export function AppProvider({ children }) {
   }), [
     users, categories, transactions, isLoadingTxns, txnsError, getUser,
     userFilter,
-    addTransaction, updateTransaction, deleteTransaction,
+    addTransaction, updateTransaction, deleteTransaction, reloadCategories,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);

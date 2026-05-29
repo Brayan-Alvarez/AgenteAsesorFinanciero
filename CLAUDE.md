@@ -527,6 +527,33 @@ CREATE TABLE debt_payments (
 - [ ] Prompt del agente actualizado para contexto de deudas y splits
 - [ ] Test end-to-end: "¿Cuánto le debo a la tarjeta Visa?" → respuesta correcta
 
+### Phase 8 — Gestión de categorías + UX de selección ✅ COMPLETE
+*Categorías y subcategorías son completamente editables por el usuario desde la UI.*
+
+**Arquitectura: soft delete**
+- `categories` y `subcategories` tienen columna `is_active boolean NOT NULL DEFAULT true`
+- Eliminar = `UPDATE SET is_active = false` — las transacciones históricas conservan su `category_id`
+- AppContext carga TODAS las categorías (incluidas inactivas) para que los chips de transacciones sigan mostrándose
+- Solo las activas aparecen en TxnForm — el usuario puede cambiar categorías viejas a activas
+
+**SQL migration requerida en Supabase (ejecutar una vez):**
+```sql
+ALTER TABLE categories    ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+ALTER TABLE subcategories ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+ALTER TABLE subcategories ADD COLUMN IF NOT EXISTS icon text NOT NULL DEFAULT '📦';
+```
+
+**Cambios implementados:**
+- [x] `api/models.py` — campos `is_active`, `icon` en CategoryOut/SubcategoryOut/CategoryUpdate/SubcategoryCreate/SubcategoryUpdate
+- [x] `db/queries.py` — `get_categories(include_inactive)`, `delete_category` (soft), `delete_subcategory` (soft), `icon` en `create_subcategory`
+- [x] `api/routes/categories.py` — query param `include_inactive` en `GET /api/categories`
+- [x] `frontend/src/api/client.js` — `getCategories({ includeInactive })`, `createSubcategory`, `deleteSubcategory`
+- [x] `frontend/src/context/AppContext.jsx` — carga todas las categorías; añade `reloadCategories()`
+- [x] NEW `frontend/src/components/EmojiPicker.jsx` — grid 8 grupos × 10 emoji (80 total), cierra en click externo
+- [x] NEW `frontend/src/components/CategorySelector.jsx` — dropdown plano con jerarquía visual: categorías en negrita + subcategorías indentadas 38px + búsqueda, todo en UN solo desplegable
+- [x] `frontend/src/components/TxnForm.jsx` — reemplaza dos selects separados por `CategorySelector` único
+- [x] `frontend/src/pages/Budget.jsx` — CRUD completo de categorías/subcategorías: crear con EmojiPicker + color + tipo, eliminar con confirmación (explica soft delete), añadir/eliminar subcategorías inline
+
 ---
 
 ## How to Run Locally
