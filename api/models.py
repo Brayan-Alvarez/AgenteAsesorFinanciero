@@ -239,6 +239,7 @@ class TransactionCreate(BaseModel):
     notes: Optional[str] = None
 
 class TransactionUpdate(BaseModel):
+    user_id: Optional[str] = None
     date: Optional[str] = None
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
