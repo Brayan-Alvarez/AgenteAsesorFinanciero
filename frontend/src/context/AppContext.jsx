@@ -151,6 +151,21 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // Re-fetch current-year transactions after a bulk operation (e.g. category migration).
+  const reloadTransactions = useCallback(async () => {
+    const year = new Date().getFullYear();
+    try {
+      const txns = await getTransactionsDb({ year });
+      // categories/users may have changed too — use latest state via functional update
+      setTransactions(prev => {
+        void prev; // intentional: we replace entirely with fresh data
+        return txns.map(t => mapTxn(t, categories, users));
+      });
+    } catch (err) {
+      console.error('Failed to reload transactions:', err);
+    }
+  }, [categories, users]);
+
   // ── Derived helpers ───────────────────────────────────────────────────────
   const getUser = useCallback((id) => users.find(u => u.id === id), [users]);
 
@@ -177,6 +192,7 @@ export function AppProvider({ children }) {
 
     // Category management
     reloadCategories,
+    reloadTransactions,
 
     // Legacy Sheets data (Dashboard)
     apiBudget,
@@ -192,7 +208,7 @@ export function AppProvider({ children }) {
   }), [
     users, categories, transactions, isLoadingTxns, txnsError, getUser,
     userFilter,
-    addTransaction, updateTransaction, deleteTransaction, reloadCategories,
+    addTransaction, updateTransaction, deleteTransaction, reloadCategories, reloadTransactions,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);

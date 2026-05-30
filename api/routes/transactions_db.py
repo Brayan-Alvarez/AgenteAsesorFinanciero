@@ -10,7 +10,7 @@ DELETE /api/transactions/db/{id}
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
-from api.models import TransactionCreate, TransactionUpdate
+from api.models import TransactionCreate, TransactionUpdate, CategoryMigrationRequest
 import db.queries as q
 
 logger = logging.getLogger(__name__)
@@ -65,3 +65,16 @@ async def delete_transaction(transaction_id: str):
     except Exception as exc:
         logger.exception("DELETE /api/transactions/db/%s failed.", transaction_id)
         raise HTTPException(500, "Could not delete transaction.") from exc
+
+
+@router.post("/transactions/db/migrate-category")
+async def migrate_category(body: CategoryMigrationRequest):
+    """Bulk-reassign all transactions from a deleted category to an active one."""
+    try:
+        count = q.migrate_category_transactions(
+            body.from_category_id, body.to_category_id, body.to_subcategory_id
+        )
+        return {"migrated": count}
+    except Exception as exc:
+        logger.exception("POST /api/transactions/db/migrate-category failed.")
+        raise HTTPException(500, "Could not migrate transactions.") from exc

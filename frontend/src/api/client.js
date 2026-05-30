@@ -127,6 +127,15 @@ export async function deleteTransactionDb(id) {
   await api.delete(`/api/transactions/db/${id}`);
 }
 
+export async function migrateCategory(fromCategoryId, toCategoryId, toSubcategoryId = null) {
+  const response = await api.post('/api/transactions/db/migrate-category', {
+    from_category_id: fromCategoryId,
+    to_category_id:   toCategoryId,
+    to_subcategory_id: toSubcategoryId,
+  });
+  return response.data; // { migrated: N }
+}
+
 // ── Supabase — Summary (Dashboard aggregates) ─────────────────────────────────
 
 export async function getBudgetSummary(year, month, userId = null) {

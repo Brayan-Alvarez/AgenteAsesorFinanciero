@@ -255,6 +255,12 @@ class TransactionUpdate(BaseModel):
     type: Optional[str] = None
     notes: Optional[str] = None
 
+class CategoryMigrationRequest(BaseModel):
+    """Bulk-reassign all transactions from one category to another."""
+    from_category_id: str
+    to_category_id: str
+    to_subcategory_id: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Supabase — Debts

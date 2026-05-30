@@ -16,9 +16,11 @@ import {
   getBudgetSupabase, upsertBudget,
   getDebts, createDebt, deleteDebt, addDebtPayment, deleteDebtPayment,
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
+  migrateCategory,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
+import CategorySelector from '../components/CategorySelector.jsx';
 import EmojiPicker from '../components/EmojiPicker.jsx';
 import MonthNav from '../components/MonthNav.jsx';
 import UserToggle from '../components/UserToggle.jsx';
@@ -215,6 +217,75 @@ function SubcategoryForm({ parentCat, onSave, onCancel, error, saving }) {
         <button type="submit" className="btn primary" disabled={saving}>
           {saving ? 'Guardando…' : <><Plus size={14} /> Crear subcategoría</>}
         </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Category migration form ───────────────────────────────────────────────────
+function MigrationForm({ source, activeCategories, onMigrate, onCancel, saving, error, migrated }) {
+  const [catId, setCatId] = useState(activeCategories[0]?.id ?? '');
+  const [subId, setSubId] = useState(null);
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!catId) return;
+    onMigrate(source.id, catId, subId);
+  };
+
+  return (
+    <form onSubmit={submit}>
+      {/* Source context */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+        padding: '10px 14px', background: 'rgba(239,68,68,0.08)',
+        borderRadius: 8, border: '1px solid rgba(239,68,68,0.2)', fontSize: 13,
+      }}>
+        <span style={{ fontSize: 20, opacity: 0.6 }}>{source.icon}</span>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+            Categoría eliminada
+          </div>
+          <div style={{ fontWeight: 500, color: 'var(--text-dim)' }}>{source.name}</div>
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Mover transacciones a</label>
+        <CategorySelector
+          categories={activeCategories}
+          categoryId={catId}
+          subcategoryId={subId}
+          onChange={(c, s) => { setCatId(c); setSubId(s); }}
+        />
+      </div>
+
+      <div style={{
+        fontSize: 12, color: 'var(--text-mute)', marginBottom: 16,
+        padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 6,
+      }}>
+        Todas las transacciones (incluidas las históricas) con la categoría
+        &ldquo;{source.name}&rdquo; quedarán asignadas a la categoría seleccionada.
+      </div>
+
+      {error && (
+        <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6 }}>
+          {error}
+        </div>
+      )}
+      {migrated !== null && (
+        <div style={{ color: 'var(--green)', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: 'rgba(52,211,153,0.1)', borderRadius: 6 }}>
+          ✓ {migrated} transacciones migradas correctamente.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cerrar</button>
+        {migrated === null && (
+          <button type="submit" className="btn primary" disabled={saving || !catId}>
+            {saving ? 'Migrando…' : 'Confirmar migración'}
+          </button>
+        )}
       </div>
     </form>
   );
@@ -446,7 +517,7 @@ function DebtForm({ users, onSave, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
-  const { users, categories, transactions, userFilter, setUserFilter, reloadCategories } = useAppContext();
+  const { users, categories, transactions, userFilter, setUserFilter, reloadCategories, reloadTransactions } = useAppContext();
 
   // Only show active categories in Budget
   const activeCategories = useMemo(() => categories.filter(c => c.is_active !== false), [categories]);
@@ -468,6 +539,12 @@ export default function Budget() {
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
   const [subFormError,  setSubFormError]  = useState(null);
   const [subFormSaving, setSubFormSaving] = useState(false);
+
+  // Migration modal state
+  const [migrationSource,  setMigrationSource]  = useState(null); // deleted category being migrated
+  const [migrationSaving,  setMigrationSaving]  = useState(false);
+  const [migrationError,   setMigrationError]   = useState(null);
+  const [migrationMigrated, setMigrationMigrated] = useState(null); // null = not done, N = count
 
   // ── Load budget ─────────────────────────────────────────────────────────────
   const loadBudget = useCallback(async () => {
@@ -515,6 +592,19 @@ export default function Budget() {
     });
     return out;
   }, [transactions, userFilter, year, month]);
+
+  // Inactive (deleted) categories that still have transactions in the current year view.
+  const deletedCatsWithActivity = useMemo(() => {
+    const inactiveCats = categories.filter(c => c.is_active === false);
+    return inactiveCats
+      .map(cat => {
+        const yearTxns = filterTxns(transactions, userFilter, year, null).filter(
+          t => t.type === 'expense' && t.categoryId === cat.id
+        );
+        return { cat, count: yearTxns.length, spent: yearTxns.reduce((s, t) => s + t.amount, 0) };
+      })
+      .filter(item => item.count > 0);
+  }, [categories, transactions, userFilter, year]);
 
   const budgetMap = useMemo(() => {
     if (userFilter === 'all') {
@@ -587,6 +677,30 @@ export default function Budget() {
       await deleteSubcategory(subId);
       await reloadCategories();
     } catch (err) { console.error('Failed to delete subcategory:', err); }
+  };
+
+  // ── Migration action ─────────────────────────────────────────────────────────
+  const handleMigrate = async (fromId, toId, toSubId) => {
+    setMigrationSaving(true);
+    setMigrationError(null);
+    try {
+      const { migrated } = await migrateCategory(fromId, toId, toSubId);
+      setMigrationMigrated(migrated);
+      // Reload so the Eliminadas section updates and Transactions page reflects new categories
+      await reloadTransactions();
+    } catch (err) {
+      console.error('Migration failed:', err);
+      const msg = err?.response?.data?.detail ?? err?.message ?? 'Error desconocido';
+      setMigrationError(`No se pudo migrar: ${msg}`);
+    } finally {
+      setMigrationSaving(false);
+    }
+  };
+
+  const closeMigrationModal = () => {
+    setMigrationSource(null);
+    setMigrationError(null);
+    setMigrationMigrated(null);
   };
 
   // ── Debt actions ─────────────────────────────────────────────────────────────
@@ -842,6 +956,77 @@ export default function Budget() {
               Selecciona un usuario para editar los montos presupuestados
             </p>
           )}
+
+          {/* ── Deleted categories that still have transactions ── */}
+          {deletedCatsWithActivity.length > 0 && (
+            <div className="card flush" style={{ marginTop: 20, borderColor: 'rgba(239,68,68,0.35)' }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 20px', background: 'rgba(239,68,68,0.06)',
+                borderBottom: '1px solid rgba(239,68,68,0.2)',
+              }}>
+                <div>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--red)' }}>
+                    Categorías eliminadas con transacciones
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text-mute)', marginLeft: 10 }}>
+                    este año · migra sus transacciones para limpiar el historial
+                  </span>
+                </div>
+              </div>
+
+              {deletedCatsWithActivity.map(({ cat, count, spent }) => (
+                <div
+                  key={cat.id}
+                  style={{
+                    display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
+                    gap: 12, padding: '12px 20px', alignItems: 'center',
+                    borderBottom: '1px solid var(--border)', opacity: 0.85,
+                  }}
+                >
+                  {/* Name */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: 8,
+                      background: 'rgba(239,68,68,0.1)', color: 'var(--red)',
+                      display: 'grid', placeItems: 'center', fontSize: 15, flexShrink: 0,
+                    }}>
+                      {cat.icon}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--text-dim)', textDecoration: 'line-through' }}>
+                        {cat.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+                        {count} transacción{count !== 1 ? 'es' : ''} este año
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* No budget */}
+                  <div />
+
+                  {/* Spent */}
+                  <div style={{ textAlign: 'right' }}>
+                    <span className="mono" style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                      {fmt(spent, { compact: true })}
+                    </span>
+                  </div>
+
+                  {/* Migrate button */}
+                  <div>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, borderColor: 'var(--red)', color: 'var(--red)' }}
+                      onClick={() => { setMigrationSource(cat); setMigrationMigrated(null); setMigrationError(null); }}
+                    >
+                      Migrar →
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -913,6 +1098,20 @@ export default function Budget() {
           onSave={handleCreateCategory}
           onCancel={() => setShowCatForm(false)}
         />
+      </Modal>
+
+      <Modal open={!!migrationSource} onClose={closeMigrationModal} title="Migrar transacciones">
+        {migrationSource && (
+          <MigrationForm
+            source={migrationSource}
+            activeCategories={activeCategories}
+            onMigrate={handleMigrate}
+            onCancel={closeMigrationModal}
+            saving={migrationSaving}
+            error={migrationError}
+            migrated={migrationMigrated}
+          />
+        )}
       </Modal>
 
       <Modal open={!!subFormCat} onClose={() => { setSubFormCat(null); setSubFormError(null); }} title="Nueva subcategoría">

@@ -254,6 +254,26 @@ def delete_transaction(transaction_id: str) -> None:
     _sb().table("transactions").delete().eq("id", transaction_id).execute()
 
 
+def migrate_category_transactions(
+    from_category_id: str,
+    to_category_id: str,
+    to_subcategory_id: Optional[str] = None,
+) -> int:
+    """
+    Reassign every transaction that belongs to from_category_id to to_category_id.
+    Also sets subcategory_id (None clears it). Returns the number of rows updated.
+    This operates across ALL time, not just the current year.
+    """
+    res = (
+        _sb()
+        .table("transactions")
+        .update({"category_id": to_category_id, "subcategory_id": to_subcategory_id})
+        .eq("category_id", from_category_id)
+        .execute()
+    )
+    return len(res.data)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DEBTS
 # ══════════════════════════════════════════════════════════════════════════════
