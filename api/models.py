@@ -315,11 +315,12 @@ class DebtPaymentCreate(BaseModel):
 class SubscriptionCreate(BaseModel):
     name: str
     amount: int
-    category_id: str
     billing_day: int = 1
     icon: str = "🔄"
     color: str = "#6366f1"
-    subcategory_id: Optional[str] = None
+    # category_id is intentionally omitted from the form — the backend always
+    # assigns the "Suscripciones" category automatically.
+    category_id: Optional[str] = None
     user_id: Optional[str] = None
     start_date: Optional[str] = None
     notes: Optional[str] = None

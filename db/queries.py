@@ -375,9 +375,38 @@ def create_debt_payment(
 # SUBSCRIPTIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _get_or_create_subscriptions_category() -> str:
+    """Returns the UUID of the 'Suscripciones' category, creating it if it doesn't exist.
+
+    All subscription transactions are always assigned to this category so that
+    the budget page can display an auto-calculated read-only budget for it.
+    """
+    sb = _sb()
+    res = sb.table("categories").select("id").eq("name", "Suscripciones").limit(1).execute()
+    if res.data:
+        return res.data[0]["id"]
+    # Category doesn't exist yet — create it
+    try:
+        new_cat = sb.table("categories").insert({
+            "name":       "Suscripciones",
+            "icon":       "🔄",
+            "color":      "#6366f1",
+            "type":       "fixed",
+            "sort_order": 99,
+            "is_active":  True,
+        }).execute()
+        return new_cat.data[0]["id"]
+    except Exception:
+        # Race condition: another request created it between our SELECT and INSERT
+        res = sb.table("categories").select("id").eq("name", "Suscripciones").limit(1).execute()
+        if res.data:
+            return res.data[0]["id"]
+        raise
+
+
 def get_subscriptions(user_id: Optional[str] = None, include_inactive: bool = False) -> list[dict]:
     q = (_sb().table("subscriptions")
-         .select("*, categories(id, name, icon, color), subcategories(id, name), users(id, name, color, avatar)")
+         .select("*, users(id, name, color, avatar)")
          .order("created_at"))
     if not include_inactive:
         q = q.eq("is_active", True)
@@ -387,23 +416,25 @@ def get_subscriptions(user_id: Optional[str] = None, include_inactive: bool = Fa
 
 
 def create_subscription(
-    name: str, amount: int, category_id: str, billing_day: int,
+    name: str, amount: int, billing_day: int,
+    category_id: Optional[str] = None,
     icon: str = "🔄", color: str = "#6366f1",
-    subcategory_id: Optional[str] = None, user_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     start_date: Optional[str] = None, notes: Optional[str] = None,
 ) -> dict:
     from datetime import date as _date
+    # Always use the dedicated "Suscripciones" category — create it if needed.
+    resolved_category_id = category_id or _get_or_create_subscriptions_category()
     res = _sb().table("subscriptions").insert({
-        "name":           name,
-        "amount":         amount,
-        "category_id":    category_id,
-        "subcategory_id": subcategory_id,
-        "user_id":        user_id,
-        "billing_day":    billing_day,
-        "icon":           icon,
-        "color":          color,
-        "start_date":     start_date or str(_date.today()),
-        "notes":          notes,
+        "name":        name,
+        "amount":      amount,
+        "category_id": resolved_category_id,
+        "user_id":     user_id,
+        "billing_day": billing_day,
+        "icon":        icon,
+        "color":       color,
+        "start_date":  start_date or str(_date.today()),
+        "notes":       notes,
     }).execute()
     return res.data[0]
 

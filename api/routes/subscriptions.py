@@ -29,16 +29,15 @@ async def list_subscriptions(
 @router.post("/subscriptions", status_code=201)
 async def create_subscription_route(body: SubscriptionCreate) -> dict:
     return queries.create_subscription(
-        name           = body.name,
-        amount         = body.amount,
-        category_id    = body.category_id,
-        billing_day    = body.billing_day,
-        icon           = body.icon,
-        color          = body.color,
-        subcategory_id = body.subcategory_id,
-        user_id        = body.user_id,
-        start_date     = body.start_date,
-        notes          = body.notes,
+        name        = body.name,
+        amount      = body.amount,
+        billing_day = body.billing_day,
+        category_id = body.category_id,   # None → backend auto-assigns "Suscripciones"
+        icon        = body.icon,
+        color       = body.color,
+        user_id     = body.user_id,
+        start_date  = body.start_date,
+        notes       = body.notes,
     )
 
 

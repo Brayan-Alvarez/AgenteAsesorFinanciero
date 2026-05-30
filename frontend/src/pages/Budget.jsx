@@ -520,11 +520,12 @@ function DebtForm({ users, onSave, onCancel }) {
 const SUB_COLORS = ['#6366f1','#ec4899','#f97316','#22c55e','#06b6d4','#eab308','#8b5cf6','#ef4444'];
 
 // ── Subscription creation form ────────────────────────────────────────────────
-function SubscriptionForm({ users, activeCategories, onSave, onCancel }) {
+// No category selector: all subscriptions always go under the "Suscripciones" category.
+// The backend auto-creates that category the first time if it doesn't exist.
+function SubscriptionForm({ users, onSave, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     icon: '🔄', name: '', amount: '',
-    category_id: activeCategories[0]?.id ?? '', subcategory_id: null,
     user_id: users[0]?.id ?? '', billing_day: 1,
     color: SUB_COLORS[0], start_date: today, notes: '',
   });
@@ -534,7 +535,7 @@ function SubscriptionForm({ users, activeCategories, onSave, onCancel }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.amount || !form.category_id) return;
+    if (!form.name.trim() || !form.amount) return;
     setSaving(true);
     setError(null);
     try {
@@ -577,16 +578,6 @@ function SubscriptionForm({ users, activeCategories, onSave, onCancel }) {
           <input type="number" className="input mono" value={form.billing_day}
             onChange={e => set('billing_day', e.target.value)} min="1" max="31" required />
         </div>
-      </div>
-
-      <div className="field">
-        <label className="field-label">Categoría</label>
-        <CategorySelector
-          categories={activeCategories}
-          categoryId={form.category_id}
-          subcategoryId={form.subcategory_id}
-          onChange={(c, s) => { set('category_id', c); set('subcategory_id', s); }}
-        />
       </div>
 
       {users.length > 0 && (
@@ -649,11 +640,8 @@ function SubscriptionForm({ users, activeCategories, onSave, onCancel }) {
 }
 
 // ── Subscription card ─────────────────────────────────────────────────────────
-function SubscriptionCard({ sub, users, categories, onCancel }) {
-  const cat  = categories.find(c => c.id === sub.category_id);
-  const subcat = cat?.subcategories?.find(s => s.id === sub.subcategory_id);
-  const user = users.find(u => u.id === sub.user_id);
-
+function SubscriptionCard({ sub, users, onCancel }) {
+  const user      = users.find(u => u.id === sub.user_id);
   const startDate = new Date(sub.start_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
@@ -676,18 +664,16 @@ function SubscriptionCard({ sub, users, categories, onCancel }) {
               </span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 3, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              {cat && <span>{cat.icon} {cat.name}{subcat ? ` › ${subcat.name}` : ''}</span>}
               <span>Día {sub.billing_day} de cada mes</span>
               {user
                 ? <span style={{ color: user.color, display: 'flex', alignItems: 'center', gap: 4 }}><Avatar user={user} />{user.name}</span>
                 : <span>Pareja</span>}
+              <span style={{ fontSize: 11 }}>Desde {startDate}</span>
             </div>
+            {sub.notes && (
+              <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 3 }}>{sub.notes}</div>
+            )}
           </div>
-        </div>
-
-        <div style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 12 }}>
-          Desde {startDate}
-          {sub.notes && <> · {sub.notes}</>}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -815,7 +801,11 @@ export default function Budget() {
   const getBudgetAmount = (catId) =>
     userFilter === 'all' ? (budgetMap[catId]?.total ?? 0) : (budgetMap[catId] ?? 0);
 
-  const totalBudget = useMemo(() => Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0), [budgetMap, userFilter]);
+  const totalBudget = useMemo(() => {
+    const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
+    // Add subscription total for the "Suscripciones" category (not in budgetMap since it's non-editable)
+    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
+  }, [budgetMap, userFilter, subscriptionsCat, totalMonthlySubscriptions]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
   // ── Budget save — optimistic update ─────────────────────────────────────────
@@ -918,7 +908,10 @@ export default function Budget() {
   const handleCreateSubscription = async (data) => {
     const created = await createSubscription(data);
     setShowSubForm(false);
-    addSubscriptionLocal(created); // optimistic — avoids full reload
+    addSubscriptionLocal(created);
+    // If the "Suscripciones" category didn't exist locally, the backend may have
+    // just created it — reload categories so the budget row appears immediately.
+    if (!subscriptionsCat) await reloadCategories();
   };
 
   const handleCancelSubscription = async (sub) => {
@@ -932,20 +925,15 @@ export default function Budget() {
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
 
-  // Map category_id → { count, total } for active subscriptions — used in budget row annotations.
-  const subsByCategory = useMemo(() => {
-    const map = {};
-    subscriptions.forEach(sub => {
-      if (!map[sub.category_id]) map[sub.category_id] = { count: 0, total: 0 };
-      map[sub.category_id].count++;
-      map[sub.category_id].total += sub.amount;
-    });
-    return map;
-  }, [subscriptions]);
-
   const totalMonthlySubscriptions = useMemo(
     () => subscriptions.reduce((s, sub) => s + sub.amount, 0),
     [subscriptions],
+  );
+
+  // The "Suscripciones" category: its budget is auto-calculated, never manually edited.
+  const subscriptionsCat = useMemo(
+    () => activeCategories.find(c => c.name === 'Suscripciones'),
+    [activeCategories],
   );
 
   const maxSortOrder = useMemo(() => Math.max(...categories.map(c => c.sort_order || 0), 0), [categories]);
@@ -1036,7 +1024,9 @@ export default function Budget() {
                 Sin categorías — crea la primera con el botón "Nueva"
               </div>
             ) : activeCategories.map(cat => {
-              const budgeted = getBudgetAmount(cat.id);
+              const isSubsCat = subscriptionsCat && cat.id === subscriptionsCat.id;
+              // For the subscriptions category: budget = sum of active subscriptions (not manual).
+              const budgeted = isSubsCat ? totalMonthlySubscriptions : getBudgetAmount(cat.id);
               const spent    = spentByCategory[cat.id] ?? 0;
               const pct      = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 0;
               const over     = budgeted > 0 && spent > budgeted;
@@ -1073,43 +1063,45 @@ export default function Budget() {
                             })}
                           </div>
                         )}
-                        {/* Subscription annotation */}
-                        {subsByCategory[cat.id] && (
+                        {/* Auto-budget badge for the subscriptions category */}
+                        {isSubsCat && subscriptions.length > 0 && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
                             <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
                             <span style={{ fontSize: 11, color: 'var(--primary)' }}>
-                              {subsByCategory[cat.id].count} suscripción{subsByCategory[cat.id].count !== 1 ? 'es' : ''} · {fmt(subsByCategory[cat.id].total, { compact: true })}/mes
+                              {subscriptions.length} activa{subscriptions.length !== 1 ? 's' : ''} · automático
                             </span>
                           </div>
                         )}
                       </div>
-                      {/* Action buttons */}
-                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                        <button
-                          className="btn"
-                          style={{ padding: '3px 8px', fontSize: 11 }}
-                          title="Añadir subcategoría"
-                          onClick={() => setSubFormCat(cat)}
-                        >
-                          <Plus size={11} /> Sub
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ color: 'var(--text-mute)', padding: '3px 8px' }}
-                          title="Desactivar categoría"
-                          onClick={() => handleDeleteCategory(cat)}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
+                      {/* Action buttons — no delete for subscriptions category */}
+                      {!isSubsCat && (
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <button
+                            className="btn"
+                            style={{ padding: '3px 8px', fontSize: 11 }}
+                            title="Añadir subcategoría"
+                            onClick={() => setSubFormCat(cat)}
+                          >
+                            <Plus size={11} /> Sub
+                          </button>
+                          <button
+                            className="btn"
+                            style={{ color: 'var(--text-mute)', padding: '3px 8px' }}
+                            title="Desactivar categoría"
+                            onClick={() => handleDeleteCategory(cat)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Budget cell */}
+                    {/* Budget cell — non-editable for subscriptions category */}
                     <div style={{ textAlign: 'right' }}>
                       <BudgetCell
                         categoryId={cat.id}
                         amount={budgeted}
-                        editable={userFilter !== 'all'}
+                        editable={!isSubsCat && userFilter !== 'all'}
                         onSave={handleBudgetSave}
                       />
                     </div>
@@ -1137,7 +1129,7 @@ export default function Budget() {
                         </>
                       ) : (
                         <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>
-                          {userFilter === 'all' ? '—' : 'Click en presupuesto para agregar'}
+                          {isSubsCat ? '—' : userFilter === 'all' ? '—' : 'Click en presupuesto para agregar'}
                         </span>
                       )}
                     </div>
@@ -1379,7 +1371,6 @@ export default function Budget() {
                   key={sub.id}
                   sub={sub}
                   users={users}
-                  categories={categories}
                   onCancel={handleCancelSubscription}
                 />
               ))}
@@ -1447,7 +1438,6 @@ export default function Budget() {
         {showSubForm && (
           <SubscriptionForm
             users={users}
-            activeCategories={activeCategories}
             onSave={handleCreateSubscription}
             onCancel={() => setShowSubForm(false)}
           />
