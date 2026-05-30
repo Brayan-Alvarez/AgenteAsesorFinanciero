@@ -499,11 +499,20 @@ export default function Budget() {
 
   useEffect(() => { if (tab === 'debts') loadDebts(); }, [tab, loadDebts]);
 
-  // ── Spent per category (from AppContext) ─────────────────────────────────────
+  // ── Spent per category and subcategory (from AppContext) ─────────────────────
   const spentByCategory = useMemo(() => {
     const monthTxns = filterTxns(transactions, userFilter, year, month).filter(t => t.type === 'expense');
     const out = {};
     monthTxns.forEach(t => { out[t.categoryId] = (out[t.categoryId] ?? 0) + t.amount; });
+    return out;
+  }, [transactions, userFilter, year, month]);
+
+  const spentBySubcategory = useMemo(() => {
+    const monthTxns = filterTxns(transactions, userFilter, year, month).filter(t => t.type === 'expense');
+    const out = {};
+    monthTxns.forEach(t => {
+      if (t.subcategoryId) out[t.subcategoryId] = (out[t.subcategoryId] ?? 0) + t.amount;
+    });
     return out;
   }, [transactions, userFilter, year, month]);
 
@@ -762,30 +771,67 @@ export default function Budget() {
                     </div>
                   </div>
 
-                  {/* Subcategory rows (indented) */}
-                  {activeSubs.map(sub => (
-                    <div
-                      key={sub.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        padding: '6px 20px 6px 62px',
-                        background: 'var(--bg-2)',
-                        borderTop: '1px solid var(--border)',
-                        fontSize: 12, color: 'var(--text-dim)',
-                      }}
-                    >
-                      <span style={{ fontSize: 14 }}>{sub.icon || '·'}</span>
-                      <span style={{ flex: 1 }}>{sub.name}</span>
-                      <button
-                        className="btn"
-                        style={{ color: 'var(--text-mute)', padding: '2px 6px', fontSize: 11 }}
-                        title="Eliminar subcategoría"
-                        onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
+                  {/* Subcategory rows — same 4-column grid as category row */}
+                  {activeSubs.map(sub => {
+                    const subSpent = spentBySubcategory[sub.id] ?? 0;
+                    const subPct   = spent > 0 ? (subSpent / spent) * 100 : 0;
+                    return (
+                      <div
+                        key={sub.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 120px 120px 140px',
+                          gap: 12,
+                          padding: '5px 20px',
+                          background: 'var(--bg-2)',
+                          borderTop: '1px solid var(--border)',
+                          alignItems: 'center',
+                        }}
                       >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  ))}
+                        {/* Name — indented to align under category name text */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 42, minWidth: 0 }}>
+                          <span style={{ fontSize: 13, flexShrink: 0 }}>{sub.icon || '·'}</span>
+                          <span style={{ fontSize: 12, color: 'var(--text-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {sub.name}
+                          </span>
+                          <button
+                            className="btn"
+                            style={{ color: 'var(--text-mute)', padding: '2px 5px', fontSize: 11, flexShrink: 0 }}
+                            title="Eliminar subcategoría"
+                            onClick={() => handleDeleteSubcategory(sub.id, sub.name)}
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+
+                        {/* Budget — no per-subcategory budget */}
+                        <div />
+
+                        {/* Spent */}
+                        <div style={{ textAlign: 'right' }}>
+                          <span className="mono" style={{ fontSize: 12, color: subSpent > 0 ? 'var(--text-dim)' : 'var(--text-mute)' }}>
+                            {subSpent > 0 ? fmt(subSpent, { compact: true }) : '—'}
+                          </span>
+                        </div>
+
+                        {/* % of category total */}
+                        <div>
+                          {subSpent > 0 && spent > 0 ? (
+                            <>
+                              <div className="bar" style={{ height: 4, marginBottom: 3 }}>
+                                <div className="bar-fill" style={{ width: `${Math.min(subPct, 100)}%`, height: 4, background: cat.color + '88' }} />
+                              </div>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+                                {subPct.toFixed(0)}% del total
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>Sin gastos</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
