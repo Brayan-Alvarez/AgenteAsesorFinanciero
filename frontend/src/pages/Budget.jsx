@@ -160,7 +160,7 @@ function CategoryForm({ currentMaxOrder, onSave, onCancel }) {
 }
 
 // ── Subcategory creation form ─────────────────────────────────────────────────
-function SubcategoryForm({ parentCat, onSave, onCancel }) {
+function SubcategoryForm({ parentCat, onSave, onCancel, error, saving }) {
   const [form, setForm] = useState({ icon: '📦', name: '' });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -201,9 +201,20 @@ function SubcategoryForm({ parentCat, onSave, onCancel }) {
         />
       </div>
 
+      {error && (
+        <div style={{
+          color: 'var(--red)', fontSize: 13, marginTop: 8,
+          padding: '8px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6,
+        }}>
+          {error}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
         <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
-        <button type="submit" className="btn primary"><Plus size={14} /> Crear subcategoría</button>
+        <button type="submit" className="btn primary" disabled={saving}>
+          {saving ? 'Guardando…' : <><Plus size={14} /> Crear subcategoría</>}
+        </button>
       </div>
     </form>
   );
@@ -455,6 +466,8 @@ export default function Budget() {
   const [showDebtForm,  setShowDebtForm]  = useState(false);
   const [showCatForm,   setShowCatForm]   = useState(false);
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
+  const [subFormError,  setSubFormError]  = useState(null);
+  const [subFormSaving, setSubFormSaving] = useState(false);
 
   // ── Load budget ─────────────────────────────────────────────────────────────
   const loadBudget = useCallback(async () => {
@@ -543,11 +556,20 @@ export default function Budget() {
 
   // ── Subcategory actions ──────────────────────────────────────────────────────
   const handleCreateSubcategory = async (catId, data) => {
+    setSubFormError(null);
+    setSubFormSaving(true);
     try {
       await createSubcategory(catId, data);
       setSubFormCat(null);
+      setSubFormError(null);
       await reloadCategories();
-    } catch (err) { console.error('Failed to create subcategory:', err); }
+    } catch (err) {
+      console.error('Failed to create subcategory:', err);
+      const msg = err?.response?.data?.detail ?? err?.message ?? 'Error desconocido';
+      setSubFormError(`No se pudo crear la subcategoría: ${msg}`);
+    } finally {
+      setSubFormSaving(false);
+    }
   };
 
   const handleDeleteSubcategory = async (subId, subName) => {
@@ -847,12 +869,14 @@ export default function Budget() {
         />
       </Modal>
 
-      <Modal open={!!subFormCat} onClose={() => setSubFormCat(null)} title="Nueva subcategoría">
+      <Modal open={!!subFormCat} onClose={() => { setSubFormCat(null); setSubFormError(null); }} title="Nueva subcategoría">
         {subFormCat && (
           <SubcategoryForm
             parentCat={subFormCat}
             onSave={(data) => handleCreateSubcategory(subFormCat.id, data)}
-            onCancel={() => setSubFormCat(null)}
+            onCancel={() => { setSubFormCat(null); setSubFormError(null); }}
+            error={subFormError}
+            saving={subFormSaving}
           />
         )}
       </Modal>
