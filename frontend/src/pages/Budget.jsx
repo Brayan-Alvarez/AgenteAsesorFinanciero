@@ -517,7 +517,11 @@ function DebtForm({ users, onSave, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
-  const { users, categories, transactions, userFilter, setUserFilter, reloadCategories, reloadTransactions } = useAppContext();
+  const {
+    users, categories, transactions, userFilter, setUserFilter,
+    reloadCategories, reloadTransactions,
+    addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
+  } = useAppContext();
 
   // Only show active categories in Budget
   const activeCategories = useMemo(() => categories.filter(c => c.is_active !== false), [categories]);
@@ -627,21 +631,35 @@ export default function Budget() {
   const totalBudget = useMemo(() => Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0), [budgetMap, userFilter]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
-  // ── Budget save ──────────────────────────────────────────────────────────────
+  // ── Budget save — optimistic update ─────────────────────────────────────────
   const handleBudgetSave = useCallback(async (categoryId, amount) => {
     if (userFilter === 'all') return;
+    // Update local state immediately so there's no loading flash.
+    setBudgetRows(prev => {
+      const existing = prev.find(r => r.category_id === categoryId && r.user_id === userFilter);
+      if (existing) {
+        return prev.map(r =>
+          r.category_id === categoryId && r.user_id === userFilter ? { ...r, amount } : r
+        );
+      }
+      return [...prev, { category_id: categoryId, user_id: userFilter, year, month, amount }];
+    });
+    // Persist in the background — no loading indicator needed.
     try {
       await upsertBudget({ category_id: categoryId, user_id: userFilter, year, month, amount });
+    } catch (err) {
+      console.error('Failed to save budget:', err);
+      // Revert optimistic update on error by reloading the real state.
       await loadBudget();
-    } catch (err) { console.error('Failed to save budget:', err); }
+    }
   }, [userFilter, year, month, loadBudget]);
 
   // ── Category actions ─────────────────────────────────────────────────────────
   const handleCreateCategory = async (data) => {
     try {
-      await createCategory(data);
+      const newCat = await createCategory(data);
       setShowCatForm(false);
-      await reloadCategories();
+      addCategoryLocal(newCat); // appends only the new row — no full re-render
     } catch (err) { console.error('Failed to create category:', err); }
   };
 
@@ -649,7 +667,7 @@ export default function Budget() {
     if (!confirm(`¿Desactivar la categoría "${cat.name}"?\n\nLas transacciones existentes conservan su categoría, pero ya no aparecerá como opción al crear nuevas.`)) return;
     try {
       await deleteCategory(cat.id);
-      await reloadCategories();
+      deactivateCategoryLocal(cat.id); // marks only this row as inactive
     } catch (err) { console.error('Failed to delete category:', err); }
   };
 
@@ -658,10 +676,10 @@ export default function Budget() {
     setSubFormError(null);
     setSubFormSaving(true);
     try {
-      await createSubcategory(catId, data);
+      const newSub = await createSubcategory(catId, data);
       setSubFormCat(null);
       setSubFormError(null);
-      await reloadCategories();
+      addSubcategoryLocal(catId, newSub); // adds only the new sub-row inside its parent
     } catch (err) {
       console.error('Failed to create subcategory:', err);
       const msg = err?.response?.data?.detail ?? err?.message ?? 'Error desconocido';
@@ -675,7 +693,7 @@ export default function Budget() {
     if (!confirm(`¿Eliminar la subcategoría "${subName}"?\n\nLas transacciones que la tienen asignada no se ven afectadas.`)) return;
     try {
       await deleteSubcategory(subId);
-      await reloadCategories();
+      deactivateSubcategoryLocal(subId); // hides only this sub-row
     } catch (err) { console.error('Failed to delete subcategory:', err); }
   };
 

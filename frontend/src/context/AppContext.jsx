@@ -141,7 +141,7 @@ export function AppProvider({ children }) {
     setTransactions(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  // Re-fetch all categories (active + inactive) after create/delete in Budget.
+  // Re-fetch all categories (active + inactive) — used after bulk operations (migration).
   const reloadCategories = useCallback(async () => {
     try {
       const catsData = await getCategories({ includeInactive: true });
@@ -149,6 +149,33 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.error('Failed to reload categories:', err);
     }
+  }, []);
+
+  // Granular category state patchers — update only the affected item so the
+  // rest of the list doesn't re-render. Used by Budget CRUD instead of reloadCategories.
+  const addCategoryLocal = useCallback((cat) => {
+    setCategories(prev => [...prev, { ...cat, subcategories: cat.subcategories ?? [] }]);
+  }, []);
+
+  const addSubcategoryLocal = useCallback((catId, sub) => {
+    setCategories(prev => prev.map(c =>
+      c.id === catId ? { ...c, subcategories: [...(c.subcategories ?? []), sub] } : c
+    ));
+  }, []);
+
+  const deactivateCategoryLocal = useCallback((catId) => {
+    setCategories(prev => prev.map(c =>
+      c.id === catId ? { ...c, is_active: false } : c
+    ));
+  }, []);
+
+  const deactivateSubcategoryLocal = useCallback((subId) => {
+    setCategories(prev => prev.map(c => ({
+      ...c,
+      subcategories: (c.subcategories ?? []).map(s =>
+        s.id === subId ? { ...s, is_active: false } : s
+      ),
+    })));
   }, []);
 
   // Re-fetch current-year transactions after a bulk operation (e.g. category migration).
@@ -193,6 +220,10 @@ export function AppProvider({ children }) {
     // Category management
     reloadCategories,
     reloadTransactions,
+    addCategoryLocal,
+    addSubcategoryLocal,
+    deactivateCategoryLocal,
+    deactivateSubcategoryLocal,
 
     // Legacy Sheets data (Dashboard)
     apiBudget,
@@ -208,7 +239,9 @@ export function AppProvider({ children }) {
   }), [
     users, categories, transactions, isLoadingTxns, txnsError, getUser,
     userFilter,
-    addTransaction, updateTransaction, deleteTransaction, reloadCategories, reloadTransactions,
+    addTransaction, updateTransaction, deleteTransaction,
+    reloadCategories, reloadTransactions,
+    addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);
