@@ -101,32 +101,95 @@ function Sidebar() {
 // ---------------------------------------------------------------------------
 
 function BottomNav({ onNewTxn }) {
-  const location = useLocation();
-  const navigate = useNavigate();
+  const location  = useLocation();
+  const navigate  = useNavigate();
+  const [showAiMenu, setShowAiMenu] = useState(false);
 
-  const isActive = (to, end) => end ? location.pathname === to : location.pathname.startsWith(to);
+  const isActive  = (to, end) => end ? location.pathname === to : location.pathname.startsWith(to);
+  const isAiRoute = isActive('/recomendaciones') || isActive('/chat');
+
+  const go = (to) => { navigate(to); setShowAiMenu(false); };
 
   return (
     <nav className="bottom-nav">
-      <button className={isActive('/', true) ? 'active' : ''} onClick={() => navigate('/')}>
+      <button className={isActive('/', true) ? 'active' : ''} onClick={() => go('/')}>
         <span className="ico"><Home size={22} strokeWidth={1.8} /></span>
         Inicio
       </button>
-      <button className={isActive('/transacciones') ? 'active' : ''} onClick={() => navigate('/transacciones')}>
+
+      <button className={isActive('/transacciones') ? 'active' : ''} onClick={() => go('/transacciones')}>
         <span className="ico"><LayoutList size={22} strokeWidth={1.8} /></span>
         Movs
       </button>
+
       <button className="fab" onClick={onNewTxn} aria-label="Nueva transacción">
         <Plus size={22} />
       </button>
-      <button className={isActive('/presupuesto') ? 'active' : ''} onClick={() => navigate('/presupuesto')}>
+
+      <button className={isActive('/presupuesto') ? 'active' : ''} onClick={() => go('/presupuesto')}>
         <span className="ico"><Wallet size={22} strokeWidth={1.8} /></span>
         Presup.
       </button>
-      <button className={isActive('/recomendaciones') ? 'active' : ''} onClick={() => navigate('/recomendaciones')}>
-        <span className="ico"><Sparkles size={22} strokeWidth={1.8} /></span>
-        IA
-      </button>
+
+      {/* IA slot — tap opens a mini-menu with both AI pages */}
+      <div style={{ flex: 1, position: 'relative', display: 'flex' }}>
+
+        {/* Backdrop to close on outside tap */}
+        {showAiMenu && (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 49 }}
+            onClick={() => setShowAiMenu(false)}
+          />
+        )}
+
+        {/* Floating sub-menu */}
+        {showAiMenu && (
+          <div style={{
+            position: 'absolute', bottom: 'calc(100% + 10px)', right: 0,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 14, boxShadow: '0 -8px 32px rgba(0,0,0,0.35)',
+            zIndex: 50, overflow: 'hidden', minWidth: 168,
+          }}>
+            <button
+              onClick={() => go('/recomendaciones')}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '13px 16px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                background: isActive('/recomendaciones') ? 'var(--surface-2)' : 'transparent',
+                color: isActive('/recomendaciones') ? 'var(--primary)' : 'var(--text)',
+              }}
+            >
+              <Sparkles size={17} strokeWidth={1.8} /> IA Insights
+            </button>
+            <div style={{ height: 1, background: 'var(--border)' }} />
+            <button
+              onClick={() => go('/chat')}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '13px 16px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+                background: isActive('/chat') ? 'var(--surface-2)' : 'transparent',
+                color: isActive('/chat') ? 'var(--primary)' : 'var(--text)',
+              }}
+            >
+              <BotMessageSquare size={17} strokeWidth={1.8} /> Asesor IA
+            </button>
+          </div>
+        )}
+
+        {/* The actual tab button */}
+        <button
+          className={isAiRoute ? 'active' : ''}
+          onClick={() => setShowAiMenu(o => !o)}
+          style={{ flex: 1 }}
+        >
+          <span className="ico">
+            {isActive('/chat')
+              ? <BotMessageSquare size={22} strokeWidth={1.8} />
+              : <Sparkles size={22} strokeWidth={1.8} />}
+          </span>
+          IA
+        </button>
+      </div>
     </nav>
   );
 }
