@@ -1,14 +1,15 @@
 /**
- * Budget.jsx — Presupuesto mensual por categoría + gestión de deudas.
+ * Budget.jsx — Presupuesto mensual por categoría + gestión de deudas + suscripciones.
  *
  * Pestañas:
- *   "Presupuesto" — Lista de categorías activas con monto y gasto.
- *                   Crear / eliminar categorías y subcategorías.
- *   "Deudas"      — Cards de deudas con abonos y barra de progreso.
+ *   "Presupuesto"   — Lista de categorías activas con monto y gasto.
+ *                     Crear / eliminar categorías y subcategorías.
+ *   "Deudas"        — Cards de deudas con abonos y barra de progreso.
+ *   "Suscripciones" — Suscripciones recurrentes; generan transacciones automáticamente.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
 import { filterTxns } from '../data/seed.js';
@@ -17,6 +18,7 @@ import {
   getDebts, createDebt, deleteDebt, addDebtPayment, deleteDebtPayment,
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
   migrateCategory,
+  createSubscription, cancelSubscription,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -515,12 +517,196 @@ function DebtForm({ users, onSave, onCancel }) {
   );
 }
 
+const SUB_COLORS = ['#6366f1','#ec4899','#f97316','#22c55e','#06b6d4','#eab308','#8b5cf6','#ef4444'];
+
+// ── Subscription creation form ────────────────────────────────────────────────
+function SubscriptionForm({ users, activeCategories, onSave, onCancel }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    icon: '🔄', name: '', amount: '',
+    category_id: activeCategories[0]?.id ?? '', subcategory_id: null,
+    user_id: users[0]?.id ?? '', billing_day: 1,
+    color: SUB_COLORS[0], start_date: today, notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState(null);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.amount || !form.category_id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        ...form,
+        name:        form.name.trim(),
+        amount:      Number(form.amount),
+        billing_day: Number(form.billing_day),
+        user_id:     form.user_id || null,
+        notes:       form.notes.trim() || null,
+      });
+    } catch (err) {
+      setError(err?.response?.data?.detail ?? err?.message ?? 'Error desconocido');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit}>
+      <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Icono</label>
+          <EmojiPicker value={form.icon} onChange={v => set('icon', v)} />
+        </div>
+        <div className="field">
+          <label className="field-label">Nombre de la suscripción</label>
+          <input className="input" value={form.name} onChange={e => set('name', e.target.value)}
+            placeholder="Ej: Netflix, Spotify, iCloud" autoFocus required />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Monto mensual (COP)</label>
+          <input type="number" className="input mono" value={form.amount}
+            onChange={e => set('amount', e.target.value)} placeholder="0" min="1" required />
+        </div>
+        <div className="field">
+          <label className="field-label">Día de cobro (1–31)</label>
+          <input type="number" className="input mono" value={form.billing_day}
+            onChange={e => set('billing_day', e.target.value)} min="1" max="31" required />
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Categoría</label>
+        <CategorySelector
+          categories={activeCategories}
+          categoryId={form.category_id}
+          subcategoryId={form.subcategory_id}
+          onChange={(c, s) => { set('category_id', c); set('subcategory_id', s); }}
+        />
+      </div>
+
+      {users.length > 0 && (
+        <div className="field">
+          <label className="field-label">
+            Asignar a <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span>
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="btn"
+              style={{ flex: 1, justifyContent: 'center', borderColor: !form.user_id ? 'var(--primary)' : 'var(--border)', background: !form.user_id ? 'var(--surface-2)' : 'var(--bg-2)', fontSize: 13 }}
+              onClick={() => set('user_id', '')}>
+              Pareja
+            </button>
+            {users.map(u => (
+              <button key={u.id} type="button" className="btn"
+                style={{ flex: 1, justifyContent: 'center', borderColor: form.user_id === u.id ? u.color : 'var(--border)', background: form.user_id === u.id ? 'var(--surface-2)' : 'var(--bg-2)' }}
+                onClick={() => set('user_id', u.id)}>
+                <Avatar user={u} /> {u.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="field">
+        <label className="field-label">Color</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {SUB_COLORS.map(c => (
+            <button key={c} type="button" onClick={() => set('color', c)}
+              style={{ width: 28, height: 28, borderRadius: '50%', background: c, border: 'none', cursor: 'pointer', outline: form.color === c ? `3px solid ${c}` : '3px solid transparent', outlineOffset: 2 }} />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Fecha de inicio</label>
+          <input type="date" className="input" value={form.start_date} onChange={e => set('start_date', e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="field-label">Notas <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
+          <input className="input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Ej: Plan familiar, cuenta compartida" />
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6, marginBottom: 8 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn primary" disabled={saving}>
+          {saving ? 'Guardando…' : <><Plus size={14} /> Crear suscripción</>}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Subscription card ─────────────────────────────────────────────────────────
+function SubscriptionCard({ sub, users, categories, onCancel }) {
+  const cat  = categories.find(c => c.id === sub.category_id);
+  const subcat = cat?.subcategories?.find(s => s.id === sub.subcategory_id);
+  const user = users.find(u => u.id === sub.user_id);
+
+  const startDate = new Date(sub.start_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  return (
+    <div className="card" style={{ borderLeft: `4px solid ${sub.color}`, padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '16px 18px' }}>
+        {/* Header row */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
+          <div style={{
+            width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+            background: sub.color + '22', color: sub.color,
+            display: 'grid', placeItems: 'center', fontSize: 20,
+          }}>
+            {sub.icon}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 15 }}>{sub.name}</span>
+              <span className="mono" style={{ fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+                {fmt(sub.amount, { compact: true })}<span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-mute)' }}>/mes</span>
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 3, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              {cat && <span>{cat.icon} {cat.name}{subcat ? ` › ${subcat.name}` : ''}</span>}
+              <span>Día {sub.billing_day} de cada mes</span>
+              {user
+                ? <span style={{ color: user.color, display: 'flex', alignItems: 'center', gap: 4 }}><Avatar user={user} />{user.name}</span>
+                : <span>Pareja</span>}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 12 }}>
+          Desde {startDate}
+          {sub.notes && <> · {sub.notes}</>}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn" style={{ color: 'var(--red)', fontSize: 12 }} onClick={() => onCancel(sub)}>
+            <X size={13} /> Cancelar suscripción
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
   const {
-    users, categories, transactions, userFilter, setUserFilter,
+    users, categories, transactions, subscriptions, userFilter, setUserFilter,
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
+    addSubscriptionLocal, removeSubscriptionLocal,
   } = useAppContext();
 
   // Only show active categories in Budget
@@ -537,9 +723,10 @@ export default function Budget() {
   const [debtsLoading, setDebtsLoading] = useState(false);
 
   // Modals
-  const [paymentTarget, setPaymentTarget] = useState(null);
-  const [showDebtForm,  setShowDebtForm]  = useState(false);
-  const [showCatForm,   setShowCatForm]   = useState(false);
+  const [paymentTarget,  setPaymentTarget]  = useState(null);
+  const [showDebtForm,   setShowDebtForm]   = useState(false);
+  const [showCatForm,    setShowCatForm]    = useState(false);
+  const [showSubForm,    setShowSubForm]    = useState(false); // subscription creation modal
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
   const [subFormError,  setSubFormError]  = useState(null);
   const [subFormSaving, setSubFormSaving] = useState(false);
@@ -727,8 +914,39 @@ export default function Budget() {
   const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
   const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };
 
+  // ── Subscription actions ─────────────────────────────────────────────────────
+  const handleCreateSubscription = async (data) => {
+    const created = await createSubscription(data);
+    setShowSubForm(false);
+    addSubscriptionLocal(created); // optimistic — avoids full reload
+  };
+
+  const handleCancelSubscription = async (sub) => {
+    if (!confirm(`¿Cancelar la suscripción "${sub.name}"?\n\nSe guardará la fecha de cancelación para preservar el historial. Las transacciones ya creadas no se eliminarán.`)) return;
+    try {
+      const cancelled = await cancelSubscription(sub.id);
+      removeSubscriptionLocal(cancelled.id);
+    } catch (err) { console.error('Failed to cancel subscription:', err); }
+  };
+
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
+
+  // Map category_id → { count, total } for active subscriptions — used in budget row annotations.
+  const subsByCategory = useMemo(() => {
+    const map = {};
+    subscriptions.forEach(sub => {
+      if (!map[sub.category_id]) map[sub.category_id] = { count: 0, total: 0 };
+      map[sub.category_id].count++;
+      map[sub.category_id].total += sub.amount;
+    });
+    return map;
+  }, [subscriptions]);
+
+  const totalMonthlySubscriptions = useMemo(
+    () => subscriptions.reduce((s, sub) => s + sub.amount, 0),
+    [subscriptions],
+  );
 
   const maxSortOrder = useMemo(() => Math.max(...categories.map(c => c.sort_order || 0), 0), [categories]);
 
@@ -752,6 +970,19 @@ export default function Budget() {
       <div className="seg" style={{ marginBottom: 20, width: 'fit-content' }}>
         <button className={tab === 'budget' ? 'active' : ''} onClick={() => setTab('budget')}>Presupuesto</button>
         <button className={tab === 'debts'  ? 'active' : ''} onClick={() => setTab('debts')}>Deudas</button>
+        <button className={tab === 'subs'   ? 'active' : ''} onClick={() => setTab('subs')}>
+          <RefreshCw size={13} style={{ marginRight: 5 }} />
+          Suscripciones
+          {subscriptions.length > 0 && (
+            <span style={{
+              marginLeft: 6, background: 'var(--primary)', color: '#fff',
+              fontSize: 10, fontWeight: 700, borderRadius: 99,
+              padding: '1px 6px', lineHeight: 1.6,
+            }}>
+              {subscriptions.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ── BUDGET TAB ────────────────────────────────────────────────────────── */}
@@ -840,6 +1071,15 @@ export default function Budget() {
                                 </span>
                               ) : null;
                             })}
+                          </div>
+                        )}
+                        {/* Subscription annotation */}
+                        {subsByCategory[cat.id] && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                            <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, color: 'var(--primary)' }}>
+                              {subsByCategory[cat.id].count} suscripción{subsByCategory[cat.id].count !== 1 ? 'es' : ''} · {fmt(subsByCategory[cat.id].total, { compact: true })}/mes
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1099,6 +1339,65 @@ export default function Budget() {
         </>
       )}
 
+      {/* ── SUBS TAB ──────────────────────────────────────────────────────────── */}
+      {tab === 'subs' && (
+        <>
+          {/* KPIs */}
+          <div className="grid grid-3" style={{ marginBottom: 20 }}>
+            <div className="card">
+              <div className="kpi-label">Suscripciones activas</div>
+              <div className="kpi-value">{subscriptions.length}</div>
+            </div>
+            <div className="card">
+              <div className="kpi-label">Gasto mensual fijo</div>
+              <div className="kpi-value mono">{fmt(totalMonthlySubscriptions, { compact: true })}</div>
+            </div>
+            <div className="card">
+              <div className="kpi-label">Gasto anual estimado</div>
+              <div className="kpi-value mono" style={{ color: 'var(--text-dim)' }}>
+                {fmt(totalMonthlySubscriptions * 12, { compact: true })}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+            <button className="btn primary" onClick={() => setShowSubForm(true)}>
+              <Plus size={16} /> Nueva suscripción
+            </button>
+          </div>
+
+          {subscriptions.length === 0 ? (
+            <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--text-mute)' }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>🔄</div>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>Sin suscripciones registradas</div>
+              <div style={{ fontSize: 13 }}>Añade Netflix, Spotify u otras suscripciones recurrentes.<br/>Se cobrarán automáticamente como transacciones cada mes.</div>
+            </div>
+          ) : (
+            <div className="grid grid-2">
+              {subscriptions.map(sub => (
+                <SubscriptionCard
+                  key={sub.id}
+                  sub={sub}
+                  users={users}
+                  categories={categories}
+                  onCancel={handleCancelSubscription}
+                />
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: 20, padding: '14px 18px', background: 'var(--bg-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 6 }}>¿Cómo funcionan las suscripciones?</div>
+            <div style={{ fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.7 }}>
+              · Cada mes, al llegar el día de cobro configurado, se crea automáticamente una transacción de gasto.<br/>
+              · Las transacciones aparecen en la lista de movimientos marcadas con el ícono 🔄.<br/>
+              · Al cancelar una suscripción se guarda la fecha — las transacciones anteriores no se modifican.<br/>
+              · El presupuesto de las categorías con suscripciones muestra el monto automático en la columna de suscripciones.
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── Modals ───────────────────────────────────────────────────────────── */}
       <Modal open={!!paymentTarget} onClose={() => setPaymentTarget(null)} title="Registrar abono">
         {paymentTarget && (
@@ -1140,6 +1439,17 @@ export default function Budget() {
             onCancel={() => { setSubFormCat(null); setSubFormError(null); }}
             error={subFormError}
             saving={subFormSaving}
+          />
+        )}
+      </Modal>
+
+      <Modal open={showSubForm} onClose={() => setShowSubForm(false)} title="Nueva suscripción">
+        {showSubForm && (
+          <SubscriptionForm
+            users={users}
+            activeCategories={activeCategories}
+            onSave={handleCreateSubscription}
+            onCancel={() => setShowSubForm(false)}
           />
         )}
       </Modal>

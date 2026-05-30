@@ -156,7 +156,18 @@ export default function Transactions({ openTxnForm }) {
                           </div>
                         </td>
                         <td>
-                          <div style={{ fontWeight: 500 }}>{t.desc}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 500 }}>
+                            {t.desc}
+                            {t.subscriptionId && (
+                              <span title="Pago automático de suscripción" style={{
+                                fontSize: 10, background: 'var(--primary)22', color: 'var(--primary)',
+                                border: '1px solid var(--primary)44', borderRadius: 99,
+                                padding: '1px 6px', fontWeight: 600, flexShrink: 0,
+                              }}>
+                                🔄 sub
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{cat.name}</div>
                         </td>
                         <td>

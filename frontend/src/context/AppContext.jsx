@@ -17,6 +17,7 @@ import {
   getBudget, getExpenses, getTrend,
   getUsers, getCategories,
   getTransactionsDb, createTransactionDb, updateTransactionDb, deleteTransactionDb,
+  getSubscriptions, processSubscriptions,
 } from '../api/client.js';
 
 const AppContext = createContext(null);
@@ -30,27 +31,29 @@ function mapTxn(item, categories = [], users = []) {
   const cat  = categories.find(c => c.id === item.category_id);
   const user = users.find(u => u.id === item.user_id) ?? item.users;
   return {
-    id:            item.id,
-    userId:        item.user_id,
-    date:          item.date,
-    desc:          item.description,
-    category:      item.categories?.name ?? cat?.name ?? '',
-    categoryId:    item.category_id,
-    subcategoryId: item.subcategory_id,
-    amount:        item.amount,
-    type:          item.type,
-    notes:         item.notes ?? null,
+    id:             item.id,
+    userId:         item.user_id,
+    date:           item.date,
+    desc:           item.description,
+    category:       item.categories?.name ?? cat?.name ?? '',
+    categoryId:     item.category_id,
+    subcategoryId:  item.subcategory_id,
+    amount:         item.amount,
+    type:           item.type,
+    notes:          item.notes ?? null,
+    subscriptionId: item.subscription_id ?? null,  // set when auto-created by a subscription
     user,
   };
 }
 
 export function AppProvider({ children }) {
   // ── Supabase data ────────────────────────────────────────────────────────
-  const [users,         setUsers]         = useState([]);
-  const [categories,    setCategories]    = useState([]);
-  const [transactions,  setTransactions]  = useState([]);
-  const [isLoadingTxns, setIsLoadingTxns] = useState(true);
-  const [txnsError,     setTxnsError]     = useState(null);
+  const [users,          setUsers]          = useState([]);
+  const [categories,     setCategories]     = useState([]);
+  const [transactions,   setTransactions]   = useState([]);
+  const [subscriptions,  setSubscriptions]  = useState([]);
+  const [isLoadingTxns,  setIsLoadingTxns]  = useState(true);
+  const [txnsError,      setTxnsError]      = useState(null);
 
   // ── UI filter ─────────────────────────────────────────────────────────────
   const [userFilter, setUserFilter] = useState('all');
@@ -67,22 +70,44 @@ export function AppProvider({ children }) {
 
   // ── Load everything on mount ──────────────────────────────────────────────
   useEffect(() => {
-    const year = new Date().getFullYear();
+    const now          = new Date();
+    const year         = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
 
-    // Users + categories (needed before mapping transactions).
-    // Load ALL categories including inactive so existing transaction chips still show correctly.
+    // 1. Users + categories (needed before mapping transactions).
+    //    Load ALL categories including inactive so transaction chips still render.
     Promise.all([getUsers(), getCategories({ includeInactive: true })])
       .then(([usersData, catsData]) => {
         setUsers(usersData);
         setCategories(catsData);
 
-        // Load transactions after we have categories + users for mapping
+        // 2. Load transactions (requires users + categories for mapping)
         return getTransactionsDb({ year }).then(txns => {
           setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
+          return [usersData, catsData];
         });
+      })
+      .then(([usersData, catsData]) => {
+        // 3. Process any pending subscription transactions for the current month.
+        //    This is idempotent — safe to call on every page load.
+        return processSubscriptions(year, currentMonth)
+          .then(({ created }) => {
+            if (created > 0) {
+              // New subscription transactions were generated — reload to include them.
+              return getTransactionsDb({ year }).then(txns => {
+                setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
+              });
+            }
+          })
+          .catch(err => console.warn('Subscription auto-processing failed:', err));
       })
       .catch(err => setTxnsError(err.message))
       .finally(() => setIsLoadingTxns(false));
+
+    // Subscriptions list — independent, can fail separately
+    getSubscriptions()
+      .then(subs => setSubscriptions(subs))
+      .catch(err => console.warn('Failed to load subscriptions:', err));
 
     // Legacy Sheets data for Dashboard charts — independent, can fail separately
     Promise.all([getBudget(), getTrend()])
@@ -178,6 +203,25 @@ export function AppProvider({ children }) {
     })));
   }, []);
 
+  // ── Subscription state patchers ───────────────────────────────────────────
+
+  const reloadSubscriptions = useCallback(async () => {
+    try {
+      const subs = await getSubscriptions();
+      setSubscriptions(subs);
+    } catch (err) {
+      console.error('Failed to reload subscriptions:', err);
+    }
+  }, []);
+
+  const addSubscriptionLocal = useCallback((sub) => {
+    setSubscriptions(prev => [...prev, sub]);
+  }, []);
+
+  const removeSubscriptionLocal = useCallback((subId) => {
+    setSubscriptions(prev => prev.filter(s => s.id !== subId));
+  }, []);
+
   // Re-fetch current-year transactions after a bulk operation (e.g. category migration).
   const reloadTransactions = useCallback(async () => {
     const year = new Date().getFullYear();
@@ -201,6 +245,7 @@ export function AppProvider({ children }) {
     users,
     categories,
     transactions,
+    subscriptions,
     isLoadingTxns,
     txnsError,
     getUser,
@@ -225,6 +270,11 @@ export function AppProvider({ children }) {
     deactivateCategoryLocal,
     deactivateSubcategoryLocal,
 
+    // Subscription management
+    reloadSubscriptions,
+    addSubscriptionLocal,
+    removeSubscriptionLocal,
+
     // Legacy Sheets data (Dashboard)
     apiBudget,
     apiTrend,
@@ -237,11 +287,12 @@ export function AppProvider({ children }) {
     chatHistory,
     setChatHistory,
   }), [
-    users, categories, transactions, isLoadingTxns, txnsError, getUser,
+    users, categories, transactions, subscriptions, isLoadingTxns, txnsError, getUser,
     userFilter,
     addTransaction, updateTransaction, deleteTransaction,
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
+    reloadSubscriptions, addSubscriptionLocal, removeSubscriptionLocal,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);

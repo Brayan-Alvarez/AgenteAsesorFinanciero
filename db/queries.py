@@ -371,6 +371,131 @@ def create_debt_payment(
     return payment
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SUBSCRIPTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_subscriptions(user_id: Optional[str] = None, include_inactive: bool = False) -> list[dict]:
+    q = (_sb().table("subscriptions")
+         .select("*, categories(id, name, icon, color), subcategories(id, name), users(id, name, color, avatar)")
+         .order("created_at"))
+    if not include_inactive:
+        q = q.eq("is_active", True)
+    if user_id:
+        q = q.eq("user_id", user_id)
+    return q.execute().data
+
+
+def create_subscription(
+    name: str, amount: int, category_id: str, billing_day: int,
+    icon: str = "🔄", color: str = "#6366f1",
+    subcategory_id: Optional[str] = None, user_id: Optional[str] = None,
+    start_date: Optional[str] = None, notes: Optional[str] = None,
+) -> dict:
+    from datetime import date as _date
+    res = _sb().table("subscriptions").insert({
+        "name":           name,
+        "amount":         amount,
+        "category_id":    category_id,
+        "subcategory_id": subcategory_id,
+        "user_id":        user_id,
+        "billing_day":    billing_day,
+        "icon":           icon,
+        "color":          color,
+        "start_date":     start_date or str(_date.today()),
+        "notes":          notes,
+    }).execute()
+    return res.data[0]
+
+
+def update_subscription(subscription_id: str, **fields) -> dict:
+    res = _sb().table("subscriptions").update(fields).eq("id", subscription_id).execute()
+    return res.data[0]
+
+
+def cancel_subscription(subscription_id: str) -> dict:
+    """Soft delete: marks inactive and records end_date for historical budget accuracy."""
+    from datetime import date as _date
+    res = _sb().table("subscriptions").update({
+        "is_active": False,
+        "end_date":  str(_date.today()),
+    }).eq("id", subscription_id).execute()
+    return res.data[0]
+
+
+def process_pending_subscriptions(year: int, month: int) -> int:
+    """
+    For the given month, create expense transactions for every active subscription
+    whose billing_day has arrived (≤ today.day for the current month, always for
+    past months) and that has no transaction yet for that month.
+
+    Safe to call multiple times — checks for existing transactions before inserting.
+    Returns the number of transactions created.
+    """
+    import datetime
+    today = datetime.date.today()
+    first_day = datetime.date(year, month, 1)
+    last_day_num = (datetime.date(year, month % 12 + 1, 1) - datetime.timedelta(days=1)).day \
+                   if month < 12 else 31
+    last_day = datetime.date(year, month, last_day_num)
+
+    is_current = (year == today.year and month == today.month)
+
+    sb = _sb()
+
+    # Active subscriptions that started before or during this month
+    subs = (sb.table("subscriptions")
+              .select("*")
+              .eq("is_active", True)
+              .lte("start_date", str(last_day))
+              .execute().data)
+
+    # Also include subscriptions cancelled DURING this month (they should still be billed)
+    cancelled = (sb.table("subscriptions")
+                   .select("*")
+                   .eq("is_active", False)
+                   .lte("start_date", str(last_day))
+                   .gte("end_date",   str(first_day))
+                   .execute().data)
+
+    created = 0
+    for sub in subs + cancelled:
+        billing_day = sub["billing_day"]
+
+        # For the current month, only create if billing day has arrived
+        if is_current and billing_day > today.day:
+            continue
+
+        # Clamp billing_day to the actual last day of the month
+        actual_day = min(billing_day, last_day_num)
+        txn_date = str(datetime.date(year, month, actual_day))
+
+        # Skip if a transaction for this subscription already exists this month
+        existing = (sb.table("transactions")
+                      .select("id")
+                      .eq("subscription_id", sub["id"])
+                      .gte("date", str(first_day))
+                      .lte("date", str(last_day))
+                      .execute().data)
+        if existing:
+            continue
+
+        sb.table("transactions").insert({
+            "user_id":         sub["user_id"],
+            "date":            txn_date,
+            "category_id":     sub["category_id"],
+            "subcategory_id":  sub["subcategory_id"],
+            "description":     sub["name"],
+            "amount":          sub["amount"],
+            "type":            "expense",
+            "subscription_id": sub["id"],
+            "notes":           "Pago automático de suscripción",
+        }).execute()
+        created += 1
+
+    return created
+
+
 def delete_debt_payment(payment_id: str) -> None:
     sb = _sb()
     # Re-open the debt if it was marked paid

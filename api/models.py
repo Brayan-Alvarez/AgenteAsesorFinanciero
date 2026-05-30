@@ -306,3 +306,31 @@ class DebtPaymentCreate(BaseModel):
     paid_by: Optional[str] = None
     description: Optional[str] = None
     notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Supabase — Subscriptions
+# ---------------------------------------------------------------------------
+
+class SubscriptionCreate(BaseModel):
+    name: str
+    amount: int
+    category_id: str
+    billing_day: int = 1
+    icon: str = "🔄"
+    color: str = "#6366f1"
+    subcategory_id: Optional[str] = None
+    user_id: Optional[str] = None
+    start_date: Optional[str] = None
+    notes: Optional[str] = None
+
+class SubscriptionUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[int] = None
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    user_id: Optional[str] = None
+    billing_day: Optional[int] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    notes: Optional[str] = None

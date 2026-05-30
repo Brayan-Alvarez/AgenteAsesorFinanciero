@@ -190,3 +190,35 @@ export async function addDebtPayment(debtId, data) {
 export async function deleteDebtPayment(paymentId) {
   await api.delete(`/api/debt-payments/${paymentId}`);
 }
+
+// ── Supabase — Subscriptions ──────────────────────────────────────────────────
+
+export async function getSubscriptions({ userId = null, includeInactive = false } = {}) {
+  const params = {};
+  if (userId) params.user_id = userId;
+  if (includeInactive) params.include_inactive = true;
+  const response = await api.get('/api/subscriptions', { params });
+  return response.data;
+}
+
+export async function createSubscription(data) {
+  const response = await api.post('/api/subscriptions', data);
+  return response.data;
+}
+
+export async function updateSubscription(id, data) {
+  const response = await api.put(`/api/subscriptions/${id}`, data);
+  return response.data;
+}
+
+export async function cancelSubscription(id) {
+  const response = await api.delete(`/api/subscriptions/${id}`);
+  return response.data;
+}
+
+export async function processSubscriptions(year, month) {
+  const response = await api.post('/api/subscriptions/process', null, {
+    params: { year, month },
+  });
+  return response.data; // { created: N }
+}
