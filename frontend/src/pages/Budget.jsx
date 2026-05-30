@@ -801,6 +801,18 @@ export default function Budget() {
   const getBudgetAmount = (catId) =>
     userFilter === 'all' ? (budgetMap[catId]?.total ?? 0) : (budgetMap[catId] ?? 0);
 
+  // These must be declared before totalBudget since it depends on them.
+  const totalMonthlySubscriptions = useMemo(
+    () => subscriptions.reduce((s, sub) => s + sub.amount, 0),
+    [subscriptions],
+  );
+
+  // The "Suscripciones" category: its budget is auto-calculated, never manually edited.
+  const subscriptionsCat = useMemo(
+    () => activeCategories.find(c => c.name === 'Suscripciones'),
+    [activeCategories],
+  );
+
   const totalBudget = useMemo(() => {
     const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
     // Add subscription total for the "Suscripciones" category (not in budgetMap since it's non-editable)
@@ -924,17 +936,6 @@ export default function Budget() {
 
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
-
-  const totalMonthlySubscriptions = useMemo(
-    () => subscriptions.reduce((s, sub) => s + sub.amount, 0),
-    [subscriptions],
-  );
-
-  // The "Suscripciones" category: its budget is auto-calculated, never manually edited.
-  const subscriptionsCat = useMemo(
-    () => activeCategories.find(c => c.name === 'Suscripciones'),
-    [activeCategories],
-  );
 
   const maxSortOrder = useMemo(() => Math.max(...categories.map(c => c.sort_order || 0), 0), [categories]);
 
