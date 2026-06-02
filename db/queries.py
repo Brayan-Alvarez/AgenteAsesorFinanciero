@@ -116,17 +116,52 @@ def delete_subcategory(subcategory_id: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_budget(year: int, month: int, user_id: Optional[str] = None) -> list[dict]:
+    """Return effective budget for the given month using carry-forward semantics.
+
+    The budget is conceptually annual — the user sets it once and it applies until
+    they explicitly change it (e.g. after a raise). Rules:
+
+    For each (category_id, user_id) pair:
+    1. Prefer the entry with the highest month <= requested month.
+       This is the most recent budget decision at or before the viewed month.
+    2. If no entry exists on or before the requested month (e.g. viewing January
+       when the budget was first set in May), fall back to the earliest entry in
+       the year so the view is never empty.
+
+    Examples with a budget set in May and updated in September:
+      Jan: no prior entry → falls back to May  (earliest)
+      May: exact match   → May
+      Jun: highest ≤ 6   → May   (carries forward)
+      Sep: exact match   → Sep
+      Dec: highest ≤ 12  → Sep   (carries forward)
     """
-    Return budget rows for a given month.
-    If user_id is provided, return only that user's entries.
-    The caller (API layer) derives Pareja totals and percentages.
-    """
+    from collections import defaultdict
+
     q = _sb().table("budget").select(
         "*, categories(id, name, icon, color, type)"
-    ).eq("year", year).eq("month", month)
+    ).eq("year", year)
     if user_id:
         q = q.eq("user_id", user_id)
-    return q.execute().data
+    all_rows = q.execute().data
+
+    # Group by (category_id, user_id)
+    groups: dict[tuple, list] = defaultdict(list)
+    for row in all_rows:
+        key = (row["category_id"], row.get("user_id"))
+        groups[key].append(row)
+
+    effective = []
+    for rows in groups.values():
+        # Most recent entry at or before the requested month (carry-forward)
+        prior = [r for r in rows if r["month"] <= month]
+        if prior:
+            effective.append(max(prior, key=lambda r: r["month"]))
+        else:
+            # Budget was set after this month — show the earliest available entry
+            # so the view is never blank (common when viewing January before any entry)
+            effective.append(min(rows, key=lambda r: r["month"]))
+
+    return effective
 
 
 def upsert_budget(category_id: str, user_id: str, year: int, month: int,
