@@ -949,6 +949,18 @@ export default function Budget() {
     return out;
   }, [transactions, userFilter, year, month]);
 
+  // Per-user spent per category — only computed in all-users view (used for the breakdown column).
+  const spentByCategoryAndUser = useMemo(() => {
+    if (userFilter !== 'all') return {};
+    const monthTxns = filterTxns(transactions, 'all', year, month).filter(t => t.type === 'expense');
+    const out = {};
+    monthTxns.forEach(t => {
+      if (!out[t.categoryId]) out[t.categoryId] = {};
+      out[t.categoryId][t.userId] = (out[t.categoryId][t.userId] ?? 0) + t.amount;
+    });
+    return out;
+  }, [transactions, userFilter, year, month]);
+
   // Inactive (deleted) categories that still have transactions in the current year view.
   const deletedCatsWithActivity = useMemo(() => {
     const inactiveCats = categories.filter(c => c.is_active === false);
@@ -1277,7 +1289,7 @@ export default function Budget() {
             {/* Header row — budget column wider in all-users view to fit per-user breakdown */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
+              gridTemplateColumns: userFilter === 'all' ? '1fr 160px 150px 140px' : '1fr 120px 120px 140px',
               gap: 12, padding: '10px 20px',
               fontSize: 11, color: 'var(--text-mute)',
               textTransform: 'uppercase', letterSpacing: '0.06em',
@@ -1319,7 +1331,7 @@ export default function Budget() {
                   {/* Category row */}
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
+                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 150px 140px' : '1fr 120px 120px 140px',
                     gap: 12, padding: '12px 20px', alignItems: 'center',
                   }}>
                     {/* Name + controls */}
@@ -1416,11 +1428,23 @@ export default function Budget() {
                       )}
                     </div>
 
-                    {/* Spent */}
+                    {/* Spent — in all-users view shows per-user breakdown */}
                     <div style={{ textAlign: 'right' }}>
                       <span className="mono" style={{ fontSize: 13, color: over ? 'var(--red)' : 'var(--text-dim)' }}>
                         {spent > 0 ? fmt(spent, { compact: true }) : '—'}
                       </span>
+                      {userFilter === 'all' && users.map(u => {
+                        const uSpent = spentByCategoryAndUser[cat.id]?.[u.id] ?? 0;
+                        return (
+                          <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, marginTop: 2 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: u.color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>{u.name}</span>
+                            <span className="mono" style={{ fontSize: 11, color: uSpent > 0 ? 'var(--text-dim)' : 'var(--text-mute)' }}>
+                              {uSpent > 0 ? fmt(uSpent, { compact: true }) : '—'}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Progress bar */}
@@ -1454,7 +1478,7 @@ export default function Budget() {
                         key={sub.id}
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
+                          gridTemplateColumns: userFilter === 'all' ? '1fr 160px 150px 140px' : '1fr 120px 120px 140px',
                           gap: 12,
                           padding: '5px 20px',
                           background: 'var(--bg-2)',
@@ -1540,7 +1564,7 @@ export default function Budget() {
                   key={cat.id}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
+                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 150px 140px' : '1fr 120px 120px 140px',
                     gap: 12, padding: '12px 20px', alignItems: 'center',
                     borderBottom: '1px solid var(--border)', opacity: 0.85,
                   }}
