@@ -569,3 +569,89 @@ def delete_debt_payment(payment_id: str) -> None:
     if payment:
         sb.table("debt_payments").delete().eq("id", payment_id).execute()
         sb.table("debts").update({"status": "active"}).eq("id", payment["debt_id"]).execute()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INCOME
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_income(year: int, month: int, user_id: Optional[str] = None) -> list[dict]:
+    """Return effective income for the given month using carry-forward semantics.
+
+    Identical logic to get_budget: the most recent entry per user at or before
+    the requested month is used (carry-forward). Falls back to the earliest future
+    entry if no prior entry exists for that user.
+    """
+    from collections import defaultdict
+
+    q = _sb().table("income").select(
+        "*, users(id, name, color, avatar)"
+    ).eq("year", year)
+    if user_id:
+        q = q.eq("user_id", user_id)
+    all_rows = q.execute().data
+
+    groups: dict[str, list] = defaultdict(list)
+    for row in all_rows:
+        groups[row["user_id"]].append(row)
+
+    effective = []
+    for rows in groups.values():
+        prior = [r for r in rows if r["month"] <= month]
+        if prior:
+            effective.append(max(prior, key=lambda r: r["month"]))
+        else:
+            effective.append(min(rows, key=lambda r: r["month"]))
+
+    return effective
+
+
+def upsert_income(
+    user_id: str, year: int, month: int, amount: int,
+    notes: Optional[str] = None,
+) -> dict:
+    """Create or update an income entry. Always records the change in income_history."""
+    sb = _sb()
+
+    existing = sb.table("income").select("*") \
+        .eq("user_id", user_id).eq("year", year).eq("month", month) \
+        .execute().data
+
+    if existing:
+        old_amount = existing[0]["amount"]
+        income_id  = existing[0]["id"]
+        res = sb.table("income").update({"amount": amount, "notes": notes}) \
+            .eq("id", income_id).execute()
+        entry = res.data[0]
+    else:
+        old_amount = None
+        res = sb.table("income").insert({
+            "user_id": user_id,
+            "year":    year,
+            "month":   month,
+            "amount":  amount,
+            "notes":   notes,
+        }).execute()
+        entry      = res.data[0]
+        income_id  = entry["id"]
+
+    sb.table("income_history").insert({
+        "income_id": income_id,
+        "user_id":   user_id,
+        "year":      year,
+        "month":     month,
+        "old_amount": old_amount,
+        "new_amount": amount,
+        "notes":      notes,
+    }).execute()
+
+    return entry
+
+
+def get_income_history(user_id: str) -> list[dict]:
+    """Full audit log for a user's income changes, most recent first."""
+    res = _sb().table("income_history").select("*") \
+        .eq("user_id", user_id) \
+        .order("changed_at", desc=True) \
+        .execute()
+    return res.data

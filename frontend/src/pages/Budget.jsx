@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Plus, RefreshCw, Trash2, TrendingUp, X } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
 import { filterTxns } from '../data/seed.js';
@@ -19,6 +19,7 @@ import {
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
   migrateCategory,
   createSubscription, cancelSubscription,
+  getIncome, upsertIncome, getIncomeHistory,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -686,6 +687,150 @@ function SubscriptionCard({ sub, users, onCancel }) {
   );
 }
 
+// ── Editable income cell ──────────────────────────────────────────────────────
+function IncomeCell({ amount, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val,     setVal]     = useState(String(amount));
+  const inputRef = useRef();
+
+  useEffect(() => { if (!editing) setVal(String(amount)); }, [amount, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const num = parseInt(val.replace(/\D/g, ''), 10) || 0;
+    onSave(num);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        className="input mono"
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') inputRef.current.blur(); if (e.key === 'Escape') setEditing(false); }}
+        autoFocus
+        style={{ width: '100%', textAlign: 'right', fontSize: 22, fontWeight: 700, padding: '6px 10px' }}
+      />
+    );
+  }
+
+  return (
+    <div
+      onClick={() => setEditing(true)}
+      title="Click para editar"
+      style={{
+        fontSize: 26, fontWeight: 700, cursor: 'pointer', padding: '6px 10px',
+        borderRadius: 8, border: '1px dashed var(--border)',
+        color: amount > 0 ? 'var(--text)' : 'var(--text-mute)',
+        textAlign: 'right',
+      }}
+    >
+      {amount > 0 ? fmt(amount) : <span style={{ fontSize: 14, fontWeight: 400 }}>Click para agregar ingreso</span>}
+    </div>
+  );
+}
+
+// ── Income card per user ──────────────────────────────────────────────────────
+function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, history }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const pct     = amount > 0 ? Math.min((budgetForUser / amount) * 100, 200) : 0;
+  const over    = budgetForUser > amount && amount > 0;
+  const free    = amount - budgetForUser;
+  const share   = totalIncome > 0 ? (amount / totalIncome) * 100 : 0;
+
+  return (
+    <div className="card" style={{ borderLeft: `4px solid ${user.color}`, padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '18px 20px' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <Avatar user={user} size="lg" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>{user.name}</div>
+            {totalIncome > 0 && amount > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>
+                {share.toFixed(0)}% del ingreso total del hogar
+              </div>
+            )}
+          </div>
+          <TrendingUp size={18} style={{ color: user.color, flexShrink: 0 }} />
+        </div>
+
+        {/* Editable income amount */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+            Ingreso mensual
+          </div>
+          <IncomeCell amount={amount} onSave={(v) => onSave(user.id, v)} />
+        </div>
+
+        {/* Budget vs income breakdown */}
+        {amount > 0 && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+              <span style={{ color: 'var(--text-mute)' }}>
+                Presupuestado: <span className="mono" style={{ color: 'var(--text-dim)' }}>{fmt(budgetForUser, { compact: true })}</span>
+              </span>
+              <span className="mono" style={{ fontWeight: 600, color: over ? 'var(--red)' : 'var(--green)' }}>
+                {over ? '−' : '+'}{fmt(Math.abs(free), { compact: true })} libres
+              </span>
+            </div>
+            <div className="bar" style={{ marginBottom: 5 }}>
+              <div className="bar-fill" style={{
+                width: `${Math.min(pct, 100)}%`,
+                background: over ? 'var(--red)' : pct > 85 ? 'var(--amber)' : user.color,
+              }} />
+            </div>
+            <div style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)' }} className="mono">
+              {pct.toFixed(0)}% comprometido
+            </div>
+          </div>
+        )}
+
+        {/* History toggle */}
+        {history.length > 0 && (
+          <button
+            className="btn ghost"
+            style={{ width: '100%', marginTop: 14, fontSize: 12 }}
+            onClick={() => setExpanded(e => !e)}
+          >
+            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            Historial de ingresos ({history.length})
+          </button>
+        )}
+      </div>
+
+      {/* History rows */}
+      {expanded && history.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+          {history.map(h => (
+            <div key={h.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '9px 20px', borderBottom: '1px solid var(--border)', fontSize: 12,
+            }}>
+              <span style={{ color: 'var(--text-mute)', flex: 1 }}>
+                {new Date(h.changed_at).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}
+                {' · '}
+                {['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][h.month - 1]} {h.year}
+              </span>
+              {h.old_amount !== null && h.old_amount !== undefined && (
+                <span className="mono" style={{ color: 'var(--text-mute)', textDecoration: 'line-through' }}>
+                  {fmt(h.old_amount, { compact: true })}
+                </span>
+              )}
+              <span className="mono" style={{ fontWeight: 600, color: 'var(--text)' }}>
+                {fmt(h.new_amount, { compact: true })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
   const {
@@ -707,6 +852,8 @@ export default function Budget() {
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [debts,        setDebts]        = useState([]);
   const [debtsLoading, setDebtsLoading] = useState(false);
+  const [incomeRows,    setIncomeRows]    = useState([]);    // effective income per user
+  const [incomeHistories, setIncomeHistories] = useState({}); // userId → history[]
 
   // Modals
   const [paymentTarget,  setPaymentTarget]  = useState(null);
@@ -752,6 +899,29 @@ export default function Budget() {
   }, [userFilter]);
 
   useEffect(() => { if (tab === 'debts') loadDebts(); }, [tab, loadDebts]);
+
+  // Income: load always (needed for budget-tab alert) and reload on year/month change.
+  useEffect(() => {
+    getIncome(year, month)
+      .then(rows => setIncomeRows(rows))
+      .catch(err => console.error('Failed to load income:', err));
+  }, [year, month]);
+
+  // Load income history lazily when the income tab opens (per user).
+  useEffect(() => {
+    if (tab !== 'income') return;
+    Promise.all(
+      users.map(u =>
+        getIncomeHistory(u.id)
+          .then(hist => ({ userId: u.id, hist }))
+          .catch(() => ({ userId: u.id, hist: [] }))
+      )
+    ).then(results => {
+      const map = {};
+      results.forEach(({ userId, hist }) => { map[userId] = hist; });
+      setIncomeHistories(map);
+    });
+  }, [tab, users]);
 
   // ── Spent per category and subcategory (from AppContext) ─────────────────────
   const spentByCategory = useMemo(() => {
@@ -934,6 +1104,56 @@ export default function Budget() {
     } catch (err) { console.error('Failed to cancel subscription:', err); }
   };
 
+  // ── Income actions ───────────────────────────────────────────────────────────
+  const handleIncomeSave = useCallback(async (userId, amount) => {
+    // Optimistic update
+    setIncomeRows(prev => {
+      const exists = prev.find(r => r.user_id === userId);
+      if (exists) return prev.map(r => r.user_id === userId ? { ...r, amount } : r);
+      return [...prev, { user_id: userId, year, month, amount }];
+    });
+    try {
+      await upsertIncome({ user_id: userId, year, month, amount });
+      // Refresh history for this user
+      getIncomeHistory(userId)
+        .then(hist => setIncomeHistories(prev => ({ ...prev, [userId]: hist })))
+        .catch(() => {});
+    } catch (err) {
+      console.error('Failed to save income:', err);
+      // Revert by reloading
+      getIncome(year, month).then(setIncomeRows).catch(() => {});
+    }
+  }, [year, month]);
+
+  // Income computed values
+  const incomeMap = useMemo(() => {
+    const map = {};
+    incomeRows.forEach(r => { map[r.user_id] = r.amount; });
+    return map;
+  }, [incomeRows]);
+
+  const totalIncome = useMemo(
+    () => Object.values(incomeMap).reduce((s, v) => s + v, 0),
+    [incomeMap],
+  );
+
+  // Budget per user (for income-tab per-card comparison) — from all rows regardless of filter
+  const budgetPerUser = useMemo(() => {
+    // budgetRows already contains all users when userFilter='all'.
+    // When filtered to a single user, only that user's rows appear.
+    // For the income tab we always want all users, so we use the full map.
+    const map = {};
+    budgetRows.forEach(r => {
+      if (r.user_id) map[r.user_id] = (map[r.user_id] || 0) + r.amount;
+    });
+    // Add subscription total allocated proportionally by user count (shared cost)
+    if (subscriptionsCat && totalMonthlySubscriptions > 0) {
+      const n = users.length || 1;
+      users.forEach(u => { map[u.id] = (map[u.id] || 0) + Math.round(totalMonthlySubscriptions / n); });
+    }
+    return map;
+  }, [budgetRows, subscriptionsCat, totalMonthlySubscriptions, users]);
+
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
 
@@ -948,16 +1168,20 @@ export default function Budget() {
           <div className="page-sub">{MONTHS_LONG[month - 1]} {year}</div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {tab === 'budget' && (
+          {(tab === 'budget' || tab === 'income') && (
             <MonthNav year={year} month={month} onChange={(y, m) => { setYear(y); setMonth(m); }} />
           )}
-          <UserToggle value={userFilter} onChange={setUserFilter} />
+          {tab !== 'income' && <UserToggle value={userFilter} onChange={setUserFilter} />}
         </div>
       </div>
 
       {/* Tabs */}
       <div className="seg" style={{ marginBottom: 20, width: 'fit-content' }}>
         <button className={tab === 'budget' ? 'active' : ''} onClick={() => setTab('budget')}>Presupuesto</button>
+        <button className={tab === 'income' ? 'active' : ''} onClick={() => setTab('income')}>
+          <TrendingUp size={13} style={{ marginRight: 5 }} />
+          Ingresos
+        </button>
         <button className={tab === 'debts'  ? 'active' : ''} onClick={() => setTab('debts')}>Deudas</button>
         <button className={tab === 'subs'   ? 'active' : ''} onClick={() => setTab('subs')}>
           <RefreshCw size={13} style={{ marginRight: 5 }} />
@@ -996,6 +1220,26 @@ export default function Budget() {
               </div>
             </div>
           </div>
+
+          {/* Alert: budget exceeds income */}
+          {totalIncome > 0 && totalBudget > totalIncome && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '12px 18px', marginBottom: 16,
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 10,
+            }}>
+              <AlertTriangle size={18} style={{ color: 'var(--red)', flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--red)' }}>
+                  Presupuesto supera los ingresos
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>
+                  Tienes presupuestado <strong className="mono">{fmt(totalBudget, { compact: true })}</strong> pero tus ingresos son <strong className="mono">{fmt(totalIncome, { compact: true })}</strong> — déficit de <strong className="mono" style={{ color: 'var(--red)' }}>{fmt(totalBudget - totalIncome, { compact: true })}</strong>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Category list */}
           <div className="card flush">
@@ -1276,6 +1520,85 @@ export default function Budget() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── INCOME TAB ────────────────────────────────────────────────────────── */}
+      {tab === 'income' && (
+        <>
+          {/* KPIs */}
+          <div className="grid grid-3" style={{ marginBottom: 20 }}>
+            <div className="card">
+              <div className="kpi-label">Ingresos totales</div>
+              <div className="kpi-value mono">{fmt(totalIncome, { compact: true })}</div>
+            </div>
+            <div className="card">
+              <div className="kpi-label">Presupuestado</div>
+              <div className="kpi-value mono" style={{ color: totalBudget > totalIncome && totalIncome > 0 ? 'var(--red)' : 'var(--text)' }}>
+                {fmt(totalBudget, { compact: true })}
+              </div>
+            </div>
+            <div className="card">
+              <div className="kpi-label">Libre sin presupuestar</div>
+              <div className="kpi-value mono" style={{ color: totalIncome - totalBudget < 0 ? 'var(--red)' : 'var(--green)' }}>
+                {totalIncome > 0 ? fmt(totalIncome - totalBudget, { compact: true, sign: true }) : '—'}
+              </div>
+            </div>
+          </div>
+
+          {/* Distribution bar — % of income committed to budget */}
+          {totalIncome > 0 && (
+            <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-mute)', marginBottom: 8 }}>
+                <span>Comprometido en presupuesto</span>
+                <span className="mono" style={{ fontWeight: 600, color: totalBudget > totalIncome ? 'var(--red)' : 'var(--text)' }}>
+                  {Math.round((totalBudget / totalIncome) * 100)}%
+                </span>
+              </div>
+              <div className="bar" style={{ height: 10 }}>
+                <div className="bar-fill" style={{
+                  width: `${Math.min((totalBudget / totalIncome) * 100, 100)}%`,
+                  height: 10,
+                  background: totalBudget > totalIncome ? 'var(--red)' : totalBudget / totalIncome > 0.85 ? 'var(--amber)' : 'var(--primary)',
+                }} />
+              </div>
+              {totalBudget > totalIncome && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <AlertTriangle size={13} />
+                  Presupuesto excede ingresos en {fmt(totalBudget - totalIncome, { compact: true })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Per-user income cards */}
+          {users.length === 0 ? (
+            <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--text-mute)' }}>
+              Cargando usuarios…
+            </div>
+          ) : (
+            <div className="grid grid-2">
+              {users.map(u => (
+                <UserIncomeCard
+                  key={u.id}
+                  user={u}
+                  amount={incomeMap[u.id] ?? 0}
+                  budgetForUser={budgetPerUser[u.id] ?? 0}
+                  totalIncome={totalIncome}
+                  onSave={handleIncomeSave}
+                  history={incomeHistories[u.id] ?? []}
+                />
+              ))}
+            </div>
+          )}
+
+          {totalIncome === 0 && (
+            <div style={{ marginTop: 20, padding: '14px 18px', background: 'var(--bg-2)', borderRadius: 10, border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.7 }}>
+              · Haz click en el campo de ingreso de cada persona para configurarlo.<br/>
+              · El ingreso se guarda con carry-forward: configuras en Mayo y aplica a todos los meses del año hasta que lo actualices.<br/>
+              · Al actualizar (ej. por un aumento de sueldo) quedará registrado en el historial.
             </div>
           )}
         </>

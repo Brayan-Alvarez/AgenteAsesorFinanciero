@@ -335,3 +335,35 @@ class SubscriptionUpdate(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
     notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Income + Income History
+# ---------------------------------------------------------------------------
+
+class IncomeOut(BaseModel):
+    id: str
+    user_id: str
+    year: int
+    month: int
+    amount: int
+    notes: Optional[str] = None
+    users: Optional[dict] = None          # joined user info
+
+class IncomeUpsert(BaseModel):
+    user_id: str
+    year: int
+    month: int
+    amount: int
+    notes: Optional[str] = None
+
+class IncomeHistoryOut(BaseModel):
+    id: str
+    income_id: Optional[str]
+    user_id: Optional[str]
+    year: int
+    month: int
+    old_amount: Optional[int]
+    new_amount: int
+    notes: Optional[str]
+    changed_at: str

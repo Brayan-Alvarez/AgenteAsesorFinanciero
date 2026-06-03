@@ -222,3 +222,22 @@ export async function processSubscriptions(year, month) {
   });
   return response.data; // { created: N }
 }
+
+// ── Supabase — Income ─────────────────────────────────────────────────────────
+
+export async function getIncome(year, month, userId = null) {
+  const params = { year, month };
+  if (userId) params.user_id = userId;
+  const response = await api.get('/api/income', { params });
+  return response.data;
+}
+
+export async function upsertIncome(data) {
+  const response = await api.post('/api/income', data);
+  return response.data;
+}
+
+export async function getIncomeHistory(userId) {
+  const response = await api.get('/api/income/history', { params: { user_id: userId } });
+  return response.data;
+}

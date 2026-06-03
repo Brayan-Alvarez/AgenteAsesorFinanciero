@@ -294,6 +294,9 @@ POST   /api/debts/{id}/payments             → register payment
 DELETE /api/debt-payments/{id}              → remove payment
 GET/POST/PUT/DELETE /api/subscriptions      → recurring subscriptions CRUD (DELETE = soft cancel)
 POST   /api/subscriptions/process           → idempotent: create pending subscription transactions
+GET    /api/income?year=&month=             → effective income per user (carry-forward)
+POST   /api/income                          → upsert income + record history
+GET    /api/income/history?user_id=         → audit log of income changes
 ```
 
 ---
