@@ -1257,9 +1257,10 @@ export default function Budget() {
 
           {/* Category list */}
           <div className="card flush">
-            {/* Header row */}
+            {/* Header row — budget column wider in all-users view to fit per-user breakdown */}
             <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
+              display: 'grid',
+              gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
               gap: 12, padding: '10px 20px',
               fontSize: 11, color: 'var(--text-mute)',
               textTransform: 'uppercase', letterSpacing: '0.06em',
@@ -1296,7 +1297,8 @@ export default function Budget() {
                 <div key={cat.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   {/* Category row */}
                   <div style={{
-                    display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
+                    display: 'grid',
+                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
                     gap: 12, padding: '12px 20px', alignItems: 'center',
                   }}>
                     {/* Name + controls */}
@@ -1310,18 +1312,6 @@ export default function Budget() {
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
-                        {byUser && Object.keys(byUser).length > 0 && (
-                          <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
-                            {Object.entries(byUser).map(([uid, amt]) => {
-                              const u = users.find(u => u.id === uid);
-                              return u ? (
-                                <span key={uid} style={{ fontSize: 11, color: 'var(--text-mute)' }}>
-                                  <span style={{ color: u.color }}>●</span> {u.name}: {fmt(amt, { compact: true })}
-                                </span>
-                              ) : null;
-                            })}
-                          </div>
-                        )}
                         {/* Auto-budget badge for the subscriptions category */}
                         {isSubsCat && subscriptions.length > 0 && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -1355,14 +1345,49 @@ export default function Budget() {
                       )}
                     </div>
 
-                    {/* Budget cell — non-editable for subscriptions category */}
+                    {/* Budget cell — in all-users view: total + per-user breakdown */}
                     <div style={{ textAlign: 'right' }}>
-                      <BudgetCell
-                        categoryId={cat.id}
-                        amount={budgeted}
-                        editable={!isSubsCat && userFilter !== 'all'}
-                        onSave={handleBudgetSave}
-                      />
+                      {userFilter === 'all' ? (
+                        <div>
+                          {/* Total */}
+                          <span className="mono" style={{ fontSize: 13, color: budgeted > 0 ? 'var(--text)' : 'var(--text-mute)' }}>
+                            {budgeted > 0 ? fmt(budgeted, { compact: true }) : '—'}
+                          </span>
+
+                          {/* Stacked proportion bar */}
+                          {budgeted > 0 && byUser && Object.keys(byUser).length > 1 && (
+                            <div style={{ display: 'flex', height: 3, borderRadius: 99, overflow: 'hidden', marginTop: 5, marginBottom: 4 }}>
+                              {Object.entries(byUser).map(([uid, amt]) => {
+                                const u = users.find(u => u.id === uid);
+                                return u ? (
+                                  <div key={uid} style={{ width: `${(amt / budgeted) * 100}%`, background: u.color }} />
+                                ) : null;
+                              })}
+                            </div>
+                          )}
+
+                          {/* Per-user amounts */}
+                          {byUser && Object.entries(byUser).map(([uid, amt]) => {
+                            const u = users.find(u => u.id === uid);
+                            const pct = budgeted > 0 ? Math.round((amt / budgeted) * 100) : 0;
+                            return u ? (
+                              <div key={uid} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, marginTop: 2 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: u.color, flexShrink: 0 }} />
+                                <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>{u.name}</span>
+                                <span className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(amt, { compact: true })}</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-mute)', minWidth: 26 }}>({pct}%)</span>
+                              </div>
+                            ) : null;
+                          })}
+                        </div>
+                      ) : (
+                        <BudgetCell
+                          categoryId={cat.id}
+                          amount={budgeted}
+                          editable={!isSubsCat}
+                          onSave={handleBudgetSave}
+                        />
+                      )}
                     </div>
 
                     {/* Spent */}
@@ -1403,7 +1428,7 @@ export default function Budget() {
                         key={sub.id}
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: '1fr 120px 120px 140px',
+                          gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
                           gap: 12,
                           padding: '5px 20px',
                           background: 'var(--bg-2)',
@@ -1488,7 +1513,8 @@ export default function Budget() {
                 <div
                   key={cat.id}
                   style={{
-                    display: 'grid', gridTemplateColumns: '1fr 120px 120px 140px',
+                    display: 'grid',
+                    gridTemplateColumns: userFilter === 'all' ? '1fr 160px 120px 140px' : '1fr 120px 120px 140px',
                     gap: 12, padding: '12px 20px', alignItems: 'center',
                     borderBottom: '1px solid var(--border)', opacity: 0.85,
                   }}
