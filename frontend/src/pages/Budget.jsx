@@ -850,6 +850,9 @@ export default function Budget() {
 
   const [budgetRows,    setBudgetRows]    = useState([]);
   const [budgetLoading, setBudgetLoading] = useState(false);
+  // allBudgetRows: always all users, no userFilter — used in income tab so
+  // both users' budget totals are visible regardless of who is selected.
+  const [allBudgetRows, setAllBudgetRows] = useState([]);
   const [debts,        setDebts]        = useState([]);
   const [debtsLoading, setDebtsLoading] = useState(false);
   const [incomeRows,    setIncomeRows]    = useState([]);    // effective income per user
@@ -875,7 +878,13 @@ export default function Budget() {
     setBudgetLoading(true);
     try {
       const userId = userFilter !== 'all' ? userFilter : null;
-      setBudgetRows(await getBudgetSupabase(year, month, userId));
+      // Load filtered rows for the budget tab display + all-users rows for income tab.
+      const [filtered, all] = await Promise.all([
+        getBudgetSupabase(year, month, userId),
+        userId ? getBudgetSupabase(year, month, null) : null,
+      ]);
+      setBudgetRows(filtered);
+      setAllBudgetRows(all ?? filtered); // when userFilter='all', filtered already has everyone
     } catch (err) {
       console.error('Failed to load budget:', err);
     } finally {
@@ -988,6 +997,14 @@ export default function Budget() {
     // Add subscription total for the "Suscripciones" category (not in budgetMap since it's non-editable)
     return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
   }, [budgetMap, userFilter, subscriptionsCat, totalMonthlySubscriptions]);
+
+  // All-users budget total — used in income tab regardless of who is selected.
+  const totalBudgetAllUsers = useMemo(() => {
+    const catTotals = {};
+    allBudgetRows.forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
+    const manual = Object.values(catTotals).reduce((s, v) => s + v, 0);
+    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
+  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
   // ── Budget save — optimistic update ─────────────────────────────────────────
@@ -1137,22 +1154,19 @@ export default function Budget() {
     [incomeMap],
   );
 
-  // Budget per user (for income-tab per-card comparison) — from all rows regardless of filter
+  // Budget per user for the income tab — always uses allBudgetRows (all users, no filter).
   const budgetPerUser = useMemo(() => {
-    // budgetRows already contains all users when userFilter='all'.
-    // When filtered to a single user, only that user's rows appear.
-    // For the income tab we always want all users, so we use the full map.
     const map = {};
-    budgetRows.forEach(r => {
+    allBudgetRows.forEach(r => {
       if (r.user_id) map[r.user_id] = (map[r.user_id] || 0) + r.amount;
     });
-    // Add subscription total allocated proportionally by user count (shared cost)
+    // Subscription total is shared — split evenly across users
     if (subscriptionsCat && totalMonthlySubscriptions > 0) {
       const n = users.length || 1;
       users.forEach(u => { map[u.id] = (map[u.id] || 0) + Math.round(totalMonthlySubscriptions / n); });
     }
     return map;
-  }, [budgetRows, subscriptionsCat, totalMonthlySubscriptions, users]);
+  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, users]);
 
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
@@ -1221,8 +1235,8 @@ export default function Budget() {
             </div>
           </div>
 
-          {/* Alert: budget exceeds income */}
-          {totalIncome > 0 && totalBudget > totalIncome && (
+          {/* Alert: total household budget exceeds total household income */}
+          {totalIncome > 0 && totalBudgetAllUsers > totalIncome && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '12px 18px', marginBottom: 16,
@@ -1232,10 +1246,10 @@ export default function Budget() {
               <AlertTriangle size={18} style={{ color: 'var(--red)', flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--red)' }}>
-                  Presupuesto supera los ingresos
+                  Presupuesto del hogar supera los ingresos
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>
-                  Tienes presupuestado <strong className="mono">{fmt(totalBudget, { compact: true })}</strong> pero tus ingresos son <strong className="mono">{fmt(totalIncome, { compact: true })}</strong> — déficit de <strong className="mono" style={{ color: 'var(--red)' }}>{fmt(totalBudget - totalIncome, { compact: true })}</strong>
+                  Presupuestado <strong className="mono">{fmt(totalBudgetAllUsers, { compact: true })}</strong> · Ingresos <strong className="mono">{fmt(totalIncome, { compact: true })}</strong> · Déficit <strong className="mono" style={{ color: 'var(--red)' }}>{fmt(totalBudgetAllUsers - totalIncome, { compact: true })}</strong>
                 </div>
               </div>
             </div>
@@ -1528,7 +1542,7 @@ export default function Budget() {
       {/* ── INCOME TAB ────────────────────────────────────────────────────────── */}
       {tab === 'income' && (
         <>
-          {/* KPIs */}
+          {/* KPIs — always use all-users totals regardless of userFilter */}
           <div className="grid grid-3" style={{ marginBottom: 20 }}>
             <div className="card">
               <div className="kpi-label">Ingresos totales</div>
@@ -1536,14 +1550,14 @@ export default function Budget() {
             </div>
             <div className="card">
               <div className="kpi-label">Presupuestado</div>
-              <div className="kpi-value mono" style={{ color: totalBudget > totalIncome && totalIncome > 0 ? 'var(--red)' : 'var(--text)' }}>
-                {fmt(totalBudget, { compact: true })}
+              <div className="kpi-value mono" style={{ color: totalBudgetAllUsers > totalIncome && totalIncome > 0 ? 'var(--red)' : 'var(--text)' }}>
+                {fmt(totalBudgetAllUsers, { compact: true })}
               </div>
             </div>
             <div className="card">
               <div className="kpi-label">Libre sin presupuestar</div>
-              <div className="kpi-value mono" style={{ color: totalIncome - totalBudget < 0 ? 'var(--red)' : 'var(--green)' }}>
-                {totalIncome > 0 ? fmt(totalIncome - totalBudget, { compact: true, sign: true }) : '—'}
+              <div className="kpi-value mono" style={{ color: totalIncome - totalBudgetAllUsers < 0 ? 'var(--red)' : 'var(--green)' }}>
+                {totalIncome > 0 ? fmt(totalIncome - totalBudgetAllUsers, { compact: true, sign: true }) : '—'}
               </div>
             </div>
           </div>
@@ -1553,21 +1567,21 @@ export default function Budget() {
             <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-mute)', marginBottom: 8 }}>
                 <span>Comprometido en presupuesto</span>
-                <span className="mono" style={{ fontWeight: 600, color: totalBudget > totalIncome ? 'var(--red)' : 'var(--text)' }}>
-                  {Math.round((totalBudget / totalIncome) * 100)}%
+                <span className="mono" style={{ fontWeight: 600, color: totalBudgetAllUsers > totalIncome ? 'var(--red)' : 'var(--text)' }}>
+                  {Math.round((totalBudgetAllUsers / totalIncome) * 100)}%
                 </span>
               </div>
               <div className="bar" style={{ height: 10 }}>
                 <div className="bar-fill" style={{
-                  width: `${Math.min((totalBudget / totalIncome) * 100, 100)}%`,
+                  width: `${Math.min((totalBudgetAllUsers / totalIncome) * 100, 100)}%`,
                   height: 10,
-                  background: totalBudget > totalIncome ? 'var(--red)' : totalBudget / totalIncome > 0.85 ? 'var(--amber)' : 'var(--primary)',
+                  background: totalBudgetAllUsers > totalIncome ? 'var(--red)' : totalBudgetAllUsers / totalIncome > 0.85 ? 'var(--amber)' : 'var(--primary)',
                 }} />
               </div>
-              {totalBudget > totalIncome && (
+              {totalBudgetAllUsers > totalIncome && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)', display: 'flex', gap: 6, alignItems: 'center' }}>
                   <AlertTriangle size={13} />
-                  Presupuesto excede ingresos en {fmt(totalBudget - totalIncome, { compact: true })}
+                  Presupuesto excede ingresos en {fmt(totalBudgetAllUsers - totalIncome, { compact: true })}
                 </div>
               )}
             </div>
