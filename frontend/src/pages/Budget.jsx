@@ -992,17 +992,33 @@ export default function Budget() {
     [activeCategories],
   );
 
+  // Subscription amounts grouped by owner (null-owner / Pareja subs excluded from individual views).
+  const subscriptionsByUser = useMemo(() => {
+    const map = {};
+    subscriptions.forEach(sub => {
+      if (sub.user_id) map[sub.user_id] = (map[sub.user_id] || 0) + sub.amount;
+    });
+    return map;
+  }, [subscriptions]);
+
+  // How much of the subscription total belongs to the currently selected user/view.
+  // All-users view → full household total. Individual view → only that user's subs.
+  const subsAmountForView = useMemo(() => {
+    if (userFilter === 'all') return totalMonthlySubscriptions;
+    return subscriptionsByUser[userFilter] || 0;
+  }, [userFilter, subscriptionsByUser, totalMonthlySubscriptions]);
+
   const totalBudget = useMemo(() => {
     const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
-    // Add subscription total for the "Suscripciones" category (not in budgetMap since it's non-editable)
-    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
-  }, [budgetMap, userFilter, subscriptionsCat, totalMonthlySubscriptions]);
+    return manual + (subscriptionsCat ? subsAmountForView : 0);
+  }, [budgetMap, userFilter, subscriptionsCat, subsAmountForView]);
 
   // All-users budget total — used in income tab regardless of who is selected.
   const totalBudgetAllUsers = useMemo(() => {
     const catTotals = {};
     allBudgetRows.forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
     const manual = Object.values(catTotals).reduce((s, v) => s + v, 0);
+    // Income tab always shows household totals → use all subscriptions
     return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
   }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
@@ -1160,13 +1176,14 @@ export default function Budget() {
     allBudgetRows.forEach(r => {
       if (r.user_id) map[r.user_id] = (map[r.user_id] || 0) + r.amount;
     });
-    // Subscription total is shared — split evenly across users
-    if (subscriptionsCat && totalMonthlySubscriptions > 0) {
-      const n = users.length || 1;
-      users.forEach(u => { map[u.id] = (map[u.id] || 0) + Math.round(totalMonthlySubscriptions / n); });
+    // Add each user's own subscriptions only (not split evenly — each user owns their subs)
+    if (subscriptionsCat) {
+      Object.entries(subscriptionsByUser).forEach(([uid, amt]) => {
+        map[uid] = (map[uid] || 0) + amt;
+      });
     }
     return map;
-  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, users]);
+  }, [allBudgetRows, subscriptionsCat, subscriptionsByUser]);
 
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
@@ -1285,8 +1302,12 @@ export default function Budget() {
               </div>
             ) : activeCategories.map(cat => {
               const isSubsCat = subscriptionsCat && cat.id === subscriptionsCat.id;
-              // For the subscriptions category: budget = sum of active subscriptions (not manual).
-              const budgeted = isSubsCat ? totalMonthlySubscriptions : getBudgetAmount(cat.id);
+              // Subscriptions category: budget = subscriptions for the active user/view.
+              // In individual view: only that user's subs. In all-users: full household total.
+              const budgeted = isSubsCat ? subsAmountForView : getBudgetAmount(cat.id);
+              // For the all-users breakdown column, use subscriptionsByUser for the subs category
+              // (no manual budget rows exist for it, so byUser would otherwise be empty).
+              const effectiveByUser = isSubsCat ? subscriptionsByUser : byUser;
               const spent    = spentByCategory[cat.id] ?? 0;
               const pct      = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 0;
               const over     = budgeted > 0 && spent > budgeted;
@@ -1313,14 +1334,19 @@ export default function Budget() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
                         {/* Auto-budget badge for the subscriptions category */}
-                        {isSubsCat && subscriptions.length > 0 && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                            <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                            <span style={{ fontSize: 11, color: 'var(--primary)' }}>
-                              {subscriptions.length} activa{subscriptions.length !== 1 ? 's' : ''} · automático
-                            </span>
-                          </div>
-                        )}
+                        {isSubsCat && subsAmountForView > 0 && (() => {
+                          const count = userFilter === 'all'
+                            ? subscriptions.length
+                            : subscriptions.filter(s => s.user_id === userFilter).length;
+                          return count > 0 ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                              <span style={{ fontSize: 11, color: 'var(--primary)' }}>
+                                {count} activa{count !== 1 ? 's' : ''} · automático
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                       {/* Action buttons — no delete for subscriptions category */}
                       {!isSubsCat && (
@@ -1355,9 +1381,9 @@ export default function Budget() {
                           </span>
 
                           {/* Stacked proportion bar */}
-                          {budgeted > 0 && byUser && Object.keys(byUser).length > 1 && (
+                          {budgeted > 0 && effectiveByUser && Object.keys(effectiveByUser).length > 1 && (
                             <div style={{ display: 'flex', height: 3, borderRadius: 99, overflow: 'hidden', marginTop: 5, marginBottom: 4 }}>
-                              {Object.entries(byUser).map(([uid, amt]) => {
+                              {Object.entries(effectiveByUser).map(([uid, amt]) => {
                                 const u = users.find(u => u.id === uid);
                                 return u ? (
                                   <div key={uid} style={{ width: `${(amt / budgeted) * 100}%`, background: u.color }} />
@@ -1367,7 +1393,7 @@ export default function Budget() {
                           )}
 
                           {/* Per-user amounts */}
-                          {byUser && Object.entries(byUser).map(([uid, amt]) => {
+                          {effectiveByUser && Object.entries(effectiveByUser).map(([uid, amt]) => {
                             const u = users.find(u => u.id === uid);
                             const pct = budgeted > 0 ? Math.round((amt / budgeted) * 100) : 0;
                             return u ? (
