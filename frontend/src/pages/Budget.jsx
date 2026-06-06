@@ -1207,19 +1207,47 @@ export default function Budget() {
     return subscriptionsByUser[userFilter] || 0;
   }, [userFilter, subscriptionsByUser, totalMonthlySubscriptions]);
 
+  // Custom-category subs: auto-budget contribution per category, respecting userFilter.
+  // Excludes subs in "Suscripciones" (those are handled by subsAmountForView above).
+  // Individual view: only subs owned by the selected user.
+  // All-users view: all subs regardless of owner.
+  const customSubAmountByCategory = useMemo(() => {
+    const map = {};
+    subscriptions
+      .filter(sub => !subscriptionsCat || sub.category_id !== subscriptionsCat.id)
+      .forEach(sub => {
+        if (!sub.category_id) return;
+        if (userFilter !== 'all' && sub.user_id !== userFilter) return;
+        map[sub.category_id] = (map[sub.category_id] || 0) + sub.amount;
+      });
+    return map;
+  }, [subscriptions, subscriptionsCat, userFilter]);
+
+  const totalCustomSubsForView = useMemo(
+    () => Object.values(customSubAmountByCategory).reduce((s, v) => s + v, 0),
+    [customSubAmountByCategory],
+  );
+
+  // Household total of custom-category subs — used in income tab (always all users).
+  const totalCustomSubsAllUsers = useMemo(
+    () => subscriptions
+      .filter(sub => !subscriptionsCat || sub.category_id !== subscriptionsCat.id)
+      .reduce((s, sub) => s + sub.amount, 0),
+    [subscriptions, subscriptionsCat],
+  );
+
   const totalBudget = useMemo(() => {
     const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
-    return manual + (subscriptionsCat ? subsAmountForView : 0);
-  }, [budgetMap, userFilter, subscriptionsCat, subsAmountForView]);
+    return manual + (subscriptionsCat ? subsAmountForView : 0) + totalCustomSubsForView;
+  }, [budgetMap, userFilter, subscriptionsCat, subsAmountForView, totalCustomSubsForView]);
 
   // All-users budget total — used in income tab regardless of who is selected.
   const totalBudgetAllUsers = useMemo(() => {
     const catTotals = {};
     allBudgetRows.forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
     const manual = Object.values(catTotals).reduce((s, v) => s + v, 0);
-    // Income tab always shows household totals → use all subscriptions
-    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0);
-  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions]);
+    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0) + totalCustomSubsAllUsers;
+  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
   // ── Budget save — optimistic update ─────────────────────────────────────────
@@ -1507,9 +1535,10 @@ export default function Budget() {
               </div>
             ) : activeCategories.map(cat => {
               const isSubsCat = subscriptionsCat && cat.id === subscriptionsCat.id;
-              // Subscriptions category: budget = subscriptions for the active user/view.
-              // In individual view: only that user's subs. In all-users: full household total.
-              const budgeted = isSubsCat ? subsAmountForView : getBudgetAmount(cat.id);
+              const manualBudget  = isSubsCat ? 0 : getBudgetAmount(cat.id);
+              // Auto-budget from subscriptions assigned to this specific category.
+              const customSubForCat = isSubsCat ? 0 : (customSubAmountByCategory[cat.id] ?? 0);
+              const budgeted = isSubsCat ? subsAmountForView : manualBudget + customSubForCat;
               // For the all-users breakdown column, use subscriptionsByUser for the subs category
               // (no manual budget rows exist for it, so byUser would otherwise be empty).
               const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
@@ -1538,9 +1567,8 @@ export default function Budget() {
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
-                        {/* Auto-budget badge for the subscriptions category */}
+                        {/* Auto-budget badge — "Suscripciones" category */}
                         {isSubsCat && subsAmountForView > 0 && (() => {
-                          // Count only subs that live in the "Suscripciones" category
                           const subsSubs = subscriptions.filter(s => s.category_id === subscriptionsCat?.id);
                           const count = userFilter === 'all'
                             ? subsSubs.length
@@ -1550,6 +1578,21 @@ export default function Budget() {
                               <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
                               <span style={{ fontSize: 11, color: 'var(--primary)' }}>
                                 {count} activa{count !== 1 ? 's' : ''} · automático
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                        {/* Auto-budget badge — custom-category subs */}
+                        {!isSubsCat && customSubForCat > 0 && (() => {
+                          const catSubs = subscriptions.filter(s =>
+                            s.category_id === cat.id &&
+                            (userFilter === 'all' || s.user_id === userFilter)
+                          );
+                          return catSubs.length > 0 ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                              <span style={{ fontSize: 11, color: 'var(--primary)' }}>
+                                {catSubs.length} recurrente{catSubs.length !== 1 ? 's' : ''} · automático
                               </span>
                             </div>
                           ) : null;
@@ -1612,14 +1655,34 @@ export default function Budget() {
                               </div>
                             ) : null;
                           })}
+                          {/* Auto portion from custom-category subs (all-users view) */}
+                          {!isSubsCat && customSubForCat > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 4 }}>
+                              <RefreshCw size={9} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--primary)' }}>
+                                +{fmt(customSubForCat, { compact: true })} subs
+                              </span>
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <BudgetCell
-                          categoryId={cat.id}
-                          amount={budgeted}
-                          editable={!isSubsCat}
-                          onSave={handleBudgetSave}
-                        />
+                        <>
+                          <BudgetCell
+                            categoryId={cat.id}
+                            amount={manualBudget}
+                            editable={!isSubsCat}
+                            onSave={handleBudgetSave}
+                          />
+                          {/* Auto portion from recurring subscriptions */}
+                          {customSubForCat > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3 }}>
+                              <RefreshCw size={9} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--primary)' }}>
+                                +{fmt(customSubForCat, { compact: true })}
+                              </span>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
