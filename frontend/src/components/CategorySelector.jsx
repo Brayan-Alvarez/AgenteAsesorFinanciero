@@ -18,7 +18,7 @@ import { Check, ChevronDown } from 'lucide-react';
  *   subcategoryId — current selected subcategory UUID (or null)
  *   onChange     — (categoryId, subcategoryId) => void
  */
-export default function CategorySelector({ categories, categoryId, subcategoryId, onChange }) {
+export default function CategorySelector({ categories, categoryId, subcategoryId, onChange, placeholder = 'Seleccionar categoría...', allowClear = false }) {
   const [open,        setOpen]        = useState(false);
   const [search,      setSearch]      = useState('');
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
@@ -114,7 +114,7 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
     ? selectedSub
       ? `${selectedCat.icon} ${selectedCat.name} › ${selectedSub.name}`
       : `${selectedCat.icon} ${selectedCat.name}`
-    : 'Seleccionar categoría...';
+    : placeholder;
 
   const handleSelect = (catId, subId) => {
     onChange(catId, subId ?? null);
@@ -169,6 +169,24 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
               onClick={e => e.stopPropagation()}
             />
           </div>
+
+          {/* Clear option — only shown when allowClear and something is selected */}
+          {allowClear && categoryId && (
+            <button
+              type="button"
+              onClick={() => handleSelect('', null)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px', width: '100%', border: 'none', cursor: 'pointer',
+                background: 'transparent', color: 'var(--text-mute)',
+                fontSize: 13, textAlign: 'left',
+                borderBottom: '1px solid var(--border)', flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 15 }}>✕</span>
+              <span style={{ fontStyle: 'italic' }}>{placeholder}</span>
+            </button>
+          )}
 
           {/* List */}
           <div style={{ overflowY: 'auto', flex: 1 }}>

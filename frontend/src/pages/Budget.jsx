@@ -523,10 +523,11 @@ const SUB_COLORS = ['#6366f1','#ec4899','#f97316','#22c55e','#06b6d4','#eab308',
 // ── Subscription creation form ────────────────────────────────────────────────
 // No category selector: all subscriptions always go under the "Suscripciones" category.
 // The backend auto-creates that category the first time if it doesn't exist.
-function SubscriptionForm({ users, onSave, onCancel }) {
+function SubscriptionForm({ users, categories, onSave, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     icon: '🔄', name: '', amount: '',
+    category_id: '', subcategory_id: null,  // '' = auto "Suscripciones"
     user_id: users[0]?.id ?? '', billing_day: 1,
     color: SUB_COLORS[0], start_date: today, notes: '',
   });
@@ -542,11 +543,13 @@ function SubscriptionForm({ users, onSave, onCancel }) {
     try {
       await onSave({
         ...form,
-        name:        form.name.trim(),
-        amount:      Number(form.amount),
-        billing_day: Number(form.billing_day),
-        user_id:     form.user_id || null,
-        notes:       form.notes.trim() || null,
+        name:           form.name.trim(),
+        amount:         Number(form.amount),
+        billing_day:    Number(form.billing_day),
+        category_id:    form.category_id || null,    // null → backend uses "Suscripciones"
+        subcategory_id: form.subcategory_id || null,
+        user_id:        form.user_id || null,
+        notes:          form.notes.trim() || null,
       });
     } catch (err) {
       setError(err?.response?.data?.detail ?? err?.message ?? 'Error desconocido');
@@ -579,6 +582,21 @@ function SubscriptionForm({ users, onSave, onCancel }) {
           <input type="number" className="input mono" value={form.billing_day}
             onChange={e => set('billing_day', e.target.value)} min="1" max="31" required />
         </div>
+      </div>
+
+      {/* Category: empty = auto "Suscripciones", or pick any category */}
+      <div className="field">
+        <label className="field-label">
+          Categoría <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(vacío = "Suscripciones" automático)</span>
+        </label>
+        <CategorySelector
+          categories={categories}
+          categoryId={form.category_id}
+          subcategoryId={form.subcategory_id}
+          onChange={(catId, subId) => setForm(f => ({ ...f, category_id: catId, subcategory_id: subId }))}
+          placeholder="Suscripciones (automático)"
+          allowClear
+        />
       </div>
 
       {users.length > 0 && (
@@ -641,17 +659,18 @@ function SubscriptionForm({ users, onSave, onCancel }) {
 }
 
 // ── Subscription edit form ────────────────────────────────────────────────────
-// Same fields as creation except start_date (never changes) and category (always auto).
 // Edits only affect future transactions — past ones keep their original amount.
-function SubscriptionEditForm({ sub, users, onSave, onCancel }) {
+function SubscriptionEditForm({ sub, users, categories, onSave, onCancel }) {
   const [form, setForm] = useState({
-    icon:        sub.icon,
-    name:        sub.name,
-    amount:      String(sub.amount),
-    billing_day: sub.billing_day,
-    user_id:     sub.user_id ?? '',
-    color:       sub.color,
-    notes:       sub.notes ?? '',
+    icon:           sub.icon,
+    name:           sub.name,
+    amount:         String(sub.amount),
+    billing_day:    sub.billing_day,
+    category_id:    sub.category_id ?? '',
+    subcategory_id: sub.subcategory_id ?? null,
+    user_id:        sub.user_id ?? '',
+    color:          sub.color,
+    notes:          sub.notes ?? '',
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState(null);
@@ -664,13 +683,15 @@ function SubscriptionEditForm({ sub, users, onSave, onCancel }) {
     setError(null);
     try {
       await onSave({
-        icon:        form.icon,
-        name:        form.name.trim(),
-        amount:      Number(form.amount),
-        billing_day: Number(form.billing_day),
-        user_id:     form.user_id || null,
-        color:       form.color,
-        notes:       form.notes.trim() || null,
+        icon:           form.icon,
+        name:           form.name.trim(),
+        amount:         Number(form.amount),
+        billing_day:    Number(form.billing_day),
+        category_id:    form.category_id || null,
+        subcategory_id: form.subcategory_id || null,
+        user_id:        form.user_id || null,
+        color:          form.color,
+        notes:          form.notes.trim() || null,
       });
     } catch (err) {
       setError(err?.response?.data?.detail ?? err?.message ?? 'Error desconocido');
@@ -710,6 +731,20 @@ function SubscriptionEditForm({ sub, users, onSave, onCancel }) {
           <input type="number" className="input mono" value={form.billing_day}
             onChange={e => set('billing_day', e.target.value)} min="1" max="31" required />
         </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">
+          Categoría <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(vacío = "Suscripciones" automático)</span>
+        </label>
+        <CategorySelector
+          categories={categories}
+          categoryId={form.category_id}
+          subcategoryId={form.subcategory_id}
+          onChange={(catId, subId) => setForm(f => ({ ...f, category_id: catId, subcategory_id: subId }))}
+          placeholder="Suscripciones (automático)"
+          allowClear
+        />
       </div>
 
       {users.length > 0 && (
@@ -774,8 +809,9 @@ function SubscriptionEditForm({ sub, users, onSave, onCancel }) {
 }
 
 // ── Subscription card ─────────────────────────────────────────────────────────
-function SubscriptionCard({ sub, users, onEdit, onCancel }) {
+function SubscriptionCard({ sub, users, categories, onEdit, onCancel }) {
   const user      = users.find(u => u.id === sub.user_id);
+  const cat       = categories.find(c => c.id === sub.category_id);
   const startDate = new Date(sub.start_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
@@ -802,6 +838,12 @@ function SubscriptionCard({ sub, users, onEdit, onCancel }) {
               {user
                 ? <span style={{ color: user.color, display: 'flex', alignItems: 'center', gap: 4 }}><Avatar user={user} />{user.name}</span>
                 : <span>Pareja</span>}
+              {cat && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span>{cat.icon}</span>
+                  <span style={{ color: cat.color }}>{cat.name}</span>
+                </span>
+              )}
               <span style={{ fontSize: 11 }}>Desde {startDate}</span>
             </div>
             {sub.notes && (
@@ -1129,26 +1171,34 @@ export default function Budget() {
   const getBudgetAmount = (catId) =>
     userFilter === 'all' ? (budgetMap[catId]?.total ?? 0) : (budgetMap[catId] ?? 0);
 
-  // These must be declared before totalBudget since it depends on them.
-  const totalMonthlySubscriptions = useMemo(
-    () => subscriptions.reduce((s, sub) => s + sub.amount, 0),
-    [subscriptions],
-  );
-
-  // The "Suscripciones" category: its budget is auto-calculated, never manually edited.
+  // The "Suscripciones" category: its budget is auto-calculated from subscriptions
+  // that don't have a specific category assigned (i.e. they fall back to this one).
+  // Subscriptions with a custom category (e.g. Carro propio) count toward that
+  // category's spending instead — the user budgets those manually.
   const subscriptionsCat = useMemo(
     () => activeCategories.find(c => c.name === 'Suscripciones'),
     [activeCategories],
   );
 
-  // Subscription amounts grouped by owner (null-owner / Pareja subs excluded from individual views).
+  // Only subscriptions that actually live in the "Suscripciones" category count
+  // toward its auto-budget. Custom-category subs affect their own category's spending.
+  const totalMonthlySubscriptions = useMemo(
+    () => subscriptions
+      .filter(sub => subscriptionsCat && sub.category_id === subscriptionsCat.id)
+      .reduce((s, sub) => s + sub.amount, 0),
+    [subscriptions, subscriptionsCat],
+  );
+
+  // Per-user totals — same filter: only "Suscripciones" category subs.
   const subscriptionsByUser = useMemo(() => {
     const map = {};
-    subscriptions.forEach(sub => {
-      if (sub.user_id) map[sub.user_id] = (map[sub.user_id] || 0) + sub.amount;
-    });
+    subscriptions
+      .filter(sub => subscriptionsCat && sub.category_id === subscriptionsCat.id)
+      .forEach(sub => {
+        if (sub.user_id) map[sub.user_id] = (map[sub.user_id] || 0) + sub.amount;
+      });
     return map;
-  }, [subscriptions]);
+  }, [subscriptions, subscriptionsCat]);
 
   // How much of the subscription total belongs to the currently selected user/view.
   // All-users view → full household total. Individual view → only that user's subs.
@@ -1490,9 +1540,11 @@ export default function Budget() {
                         <div style={{ fontWeight: 500, fontSize: 14 }}>{cat.name}</div>
                         {/* Auto-budget badge for the subscriptions category */}
                         {isSubsCat && subsAmountForView > 0 && (() => {
+                          // Count only subs that live in the "Suscripciones" category
+                          const subsSubs = subscriptions.filter(s => s.category_id === subscriptionsCat?.id);
                           const count = userFilter === 'all'
-                            ? subscriptions.length
-                            : subscriptions.filter(s => s.user_id === userFilter).length;
+                            ? subsSubs.length
+                            : subsSubs.filter(s => s.user_id === userFilter).length;
                           return count > 0 ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
                               <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
@@ -1928,6 +1980,7 @@ export default function Budget() {
                   key={sub.id}
                   sub={sub}
                   users={users}
+                  categories={categories}
                   onEdit={setEditingSub}
                   onCancel={handleCancelSubscription}
                 />
@@ -1996,6 +2049,7 @@ export default function Budget() {
         {showSubForm && (
           <SubscriptionForm
             users={users}
+            categories={activeCategories}
             onSave={handleCreateSubscription}
             onCancel={() => setShowSubForm(false)}
           />
@@ -2007,6 +2061,7 @@ export default function Budget() {
           <SubscriptionEditForm
             sub={editingSub}
             users={users}
+            categories={activeCategories}
             onSave={handleEditSubscription}
             onCancel={() => setEditingSub(null)}
           />

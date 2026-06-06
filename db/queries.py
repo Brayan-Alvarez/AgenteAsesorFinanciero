@@ -453,23 +453,25 @@ def get_subscriptions(user_id: Optional[str] = None, include_inactive: bool = Fa
 def create_subscription(
     name: str, amount: int, billing_day: int,
     category_id: Optional[str] = None,
+    subcategory_id: Optional[str] = None,
     icon: str = "🔄", color: str = "#6366f1",
     user_id: Optional[str] = None,
     start_date: Optional[str] = None, notes: Optional[str] = None,
 ) -> dict:
     from datetime import date as _date
-    # Always use the dedicated "Suscripciones" category — create it if needed.
+    # If no category chosen, fall back to the dedicated "Suscripciones" category.
     resolved_category_id = category_id or _get_or_create_subscriptions_category()
     res = _sb().table("subscriptions").insert({
-        "name":        name,
-        "amount":      amount,
-        "category_id": resolved_category_id,
-        "user_id":     user_id,
-        "billing_day": billing_day,
-        "icon":        icon,
-        "color":       color,
-        "start_date":  start_date or str(_date.today()),
-        "notes":       notes,
+        "name":           name,
+        "amount":         amount,
+        "category_id":    resolved_category_id,
+        "subcategory_id": subcategory_id,
+        "user_id":        user_id,
+        "billing_day":    billing_day,
+        "icon":           icon,
+        "color":          color,
+        "start_date":     start_date or str(_date.today()),
+        "notes":          notes,
     }).execute()
     return res.data[0]
 

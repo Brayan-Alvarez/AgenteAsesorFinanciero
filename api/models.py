@@ -318,9 +318,10 @@ class SubscriptionCreate(BaseModel):
     billing_day: int = 1
     icon: str = "🔄"
     color: str = "#6366f1"
-    # category_id is intentionally omitted from the form — the backend always
-    # assigns the "Suscripciones" category automatically.
+    # If category_id is None the backend auto-assigns the "Suscripciones" category.
+    # Pass a real category_id to charge a specific category (e.g. "Carro propio").
     category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
     user_id: Optional[str] = None
     start_date: Optional[str] = None
     notes: Optional[str] = None
