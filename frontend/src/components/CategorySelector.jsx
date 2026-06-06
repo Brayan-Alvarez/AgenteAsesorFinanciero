@@ -116,7 +116,7 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
           position: 'absolute', zIndex: 300, top: 'calc(100% + 4px)', left: 0, right: 0,
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-          display: 'flex', flexDirection: 'column', maxHeight: 320,
+          display: 'flex', flexDirection: 'column', maxHeight: 480,
         }}>
           {/* Search */}
           <div style={{ padding: '8px 8px 6px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
