@@ -266,8 +266,10 @@ def create_transaction(
     type_:          str,
     subcategory_id: Optional[str] = None,
     notes:          Optional[str] = None,
+    debt_id:        Optional[str] = None,
 ) -> dict:
-    res = _sb().table("transactions").insert({
+    sb  = _sb()
+    res = sb.table("transactions").insert({
         "user_id":        user_id,
         "date":           date,
         "category_id":    category_id,
@@ -276,8 +278,29 @@ def create_transaction(
         "amount":         amount,
         "type":           type_,
         "notes":          notes,
+        "debt_id":        debt_id,
     }).execute()
-    return res.data[0]
+    tx = res.data[0]
+
+    # When a transaction is linked to a debt, auto-create the matching debt_payment
+    # so the debt balance updates immediately. All manual extra payments = full capital.
+    if debt_id and type_ == "expense":
+        sb.table("debt_payments").insert({
+            "debt_id":        debt_id,
+            "amount":         amount,
+            "capital_amount": amount,   # extra payments go entirely to capital
+            "date":           date,
+            "description":    description,
+            "paid_by":        user_id,
+            "transaction_id": tx["id"],
+            "payment_type":   "manual",
+        }).execute()
+        # Auto-mark debt as paid if balance reaches zero
+        debt = get_debt(debt_id)
+        if debt and debt["pending_amount"] == 0:
+            sb.table("debts").update({"status": "paid"}).eq("id", debt_id).execute()
+
+    return tx
 
 
 def update_transaction(transaction_id: str, **fields) -> dict:
@@ -313,97 +336,289 @@ def migrate_category_transactions(
 # DEBTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _compute_debt_stats(debt: dict) -> dict:
+    """
+    Enrich a debt dict with computed financial stats:
+      pending_amount      — remaining capital balance
+      total_capital_paid  — historical + tracked capital
+      total_interest_paid — historical + tracked interest
+      total_paid          — total money actually paid out of pocket
+    Uses capital_amount from each payment if available; falls back to amount.
+    """
+    payments          = debt.get("debt_payments") or []
+    hist_cap          = debt.get("historical_capital_paid")  or 0
+    hist_int          = debt.get("historical_interest_paid") or 0
+
+    tracked_capital   = sum(p.get("capital_amount") or p["amount"] for p in payments)
+    tracked_interest  = sum(p.get("interest_amount") or 0            for p in payments)
+    tracked_total     = sum(p["amount"]                               for p in payments)
+
+    total_capital     = hist_cap + tracked_capital
+    total_interest    = hist_int + tracked_interest
+    total_paid        = hist_cap + hist_int + tracked_total
+
+    debt["pending_amount"]      = max(debt["total_amount"] - total_capital, 0)
+    debt["total_capital_paid"]  = total_capital
+    debt["total_interest_paid"] = total_interest
+    debt["total_paid"]          = total_paid
+    return debt
+
+
+def _get_or_create_debts_category() -> str:
+    """Returns the UUID of 'Finanzas y deudas', creating it if absent."""
+    sb  = _sb()
+    res = sb.table("categories").select("id").eq("name", "Finanzas y deudas").execute()
+    if res.data:
+        return res.data[0]["id"]
+    new = sb.table("categories").insert({
+        "name":       "Finanzas y deudas",
+        "icon":       "💳",
+        "color":      "#dc2626",
+        "type":       "fixed",
+        "sort_order": 12,
+    }).execute()
+    return new.data[0]["id"]
+
+
 def get_debts(user_id: Optional[str] = None) -> list[dict]:
-    """
-    Returns debts with their payments and computed pending_amount.
-    user_id=None → all debts (Pareja view).
-    """
+    """Returns debts with payments and computed financial stats."""
     q = _sb().table("debts").select(
         "*, debt_payments(*), users(id, name, color, avatar)"
     ).order("created_at", desc=True)
 
     if user_id:
-        # Show debts owned by this user OR shared debts (user_id IS NULL)
         q = q.or_(f"user_id.eq.{user_id},user_id.is.null")
 
     debts = q.execute().data
-
-    # Compute pending_amount for each debt
     for debt in debts:
-        paid = sum(p["amount"] for p in (debt.get("debt_payments") or []))
-        debt["pending_amount"] = max(debt["total_amount"] - paid, 0)
-
+        _compute_debt_stats(debt)
     return debts
 
 
 def get_debt(debt_id: str) -> dict | None:
-    res = _sb().table("debts").select("*, debt_payments(*), users(id, name, color, avatar)") \
+    res = _sb().table("debts") \
+        .select("*, debt_payments(*), users(id, name, color, avatar)") \
         .eq("id", debt_id).single().execute()
     if not res.data:
         return None
-    debt = res.data
-    paid = sum(p["amount"] for p in (debt.get("debt_payments") or []))
-    debt["pending_amount"] = max(debt["total_amount"] - paid, 0)
-    return debt
+    return _compute_debt_stats(res.data)
 
 
 def create_debt(
-    name:          str,
-    total_amount:  int,
-    user_id:       Optional[str] = None,
-    description:   Optional[str] = None,
-    color:         str = "#dc2626",
-    due_date:      Optional[str] = None,
-    interest_rate: Optional[float] = None,
+    name:                    str,
+    total_amount:            int,
+    user_id:                 Optional[str]   = None,
+    description:             Optional[str]   = None,
+    color:                   str             = "#dc2626",
+    due_date:                Optional[str]   = None,
+    installment_amount:      Optional[int]   = None,
+    annual_rate:             Optional[float] = None,
+    payment_day:             Optional[int]   = None,
+    auto_pay:                bool            = False,
+    historical_capital_paid: int             = 0,
+    historical_interest_paid:int             = 0,
 ) -> dict:
-    res = _sb().table("debts").insert({
-        "name":          name,
-        "total_amount":  total_amount,
-        "user_id":       user_id,
-        "description":   description,
-        "color":         color,
-        "due_date":      due_date,
-        "interest_rate": interest_rate,
+    sb  = _sb()
+    res = sb.table("debts").insert({
+        "name":                     name,
+        "total_amount":             total_amount,
+        "user_id":                  user_id,
+        "description":              description,
+        "color":                    color,
+        "due_date":                 due_date,
+        "installment_amount":       installment_amount,
+        "annual_rate":              annual_rate,
+        "payment_day":              payment_day,
+        "auto_pay":                 auto_pay,
+        "historical_capital_paid":  historical_capital_paid,
+        "historical_interest_paid": historical_interest_paid,
     }).execute()
-    return res.data[0]
+    debt = res.data[0]
+
+    # Auto-create a subcategory under "Finanzas y deudas" so this debt appears
+    # as a selectable option in the transaction form.
+    cat_id  = _get_or_create_debts_category()
+    sub_res = sb.table("subcategories").insert({
+        "category_id": cat_id,
+        "name":        name,
+        "icon":        "💳",
+        "sort_order":  0,
+    }).execute()
+    sub_id  = sub_res.data[0]["id"]
+    sb.table("debts").update({"subcategory_id": sub_id}).eq("id", debt["id"]).execute()
+    debt["subcategory_id"] = sub_id
+
+    return debt
 
 
 def update_debt(debt_id: str, **fields) -> dict:
-    res = _sb().table("debts").update(fields).eq("id", debt_id).execute()
-    return res.data[0]
+    # If name changed, keep the linked subcategory in sync
+    sb = _sb()
+    if "name" in fields:
+        debt_row = sb.table("debts").select("subcategory_id").eq("id", debt_id).single().execute()
+        sub_id   = debt_row.data.get("subcategory_id") if debt_row.data else None
+        if sub_id:
+            sb.table("subcategories").update({"name": fields["name"]}).eq("id", sub_id).execute()
+    sb.table("debts").update(fields).eq("id", debt_id).execute()
+    return get_debt(debt_id)
 
 
 def delete_debt(debt_id: str) -> None:
-    _sb().table("debts").delete().eq("id", debt_id).execute()
+    sb = _sb()
+    # Soft-deactivate the linked subcategory so historical transactions keep it
+    debt_row = sb.table("debts").select("subcategory_id").eq("id", debt_id).single().execute()
+    sub_id   = debt_row.data.get("subcategory_id") if debt_row.data else None
+    if sub_id:
+        sb.table("subcategories").update({"is_active": False}).eq("id", sub_id).execute()
+    sb.table("debts").delete().eq("id", debt_id).execute()
 
 
 # ── Debt payments ─────────────────────────────────────────────────────────────
 
 def create_debt_payment(
-    debt_id:     str,
-    amount:      int,
-    date:        str,
-    paid_by:     Optional[str] = None,
-    description: Optional[str] = None,
-    notes:       Optional[str] = None,
+    debt_id:        str,
+    amount:         int,
+    date:           str,
+    paid_by:        Optional[str]   = None,
+    description:    Optional[str]   = None,
+    notes:          Optional[str]   = None,
+    capital_amount: Optional[int]   = None,
+    interest_amount:Optional[int]   = None,
+    transaction_id: Optional[str]   = None,
+    payment_type:   str             = "manual",
 ) -> dict:
-    sb = _sb()
+    sb  = _sb()
     res = sb.table("debt_payments").insert({
-        "debt_id":     debt_id,
-        "amount":      amount,
-        "date":        date,
-        "paid_by":     paid_by,
-        "description": description,
-        "notes":       notes,
+        "debt_id":        debt_id,
+        "amount":         amount,
+        "date":           date,
+        "paid_by":        paid_by,
+        "description":    description,
+        "notes":          notes,
+        "capital_amount": capital_amount,
+        "interest_amount":interest_amount,
+        "transaction_id": transaction_id,
+        "payment_type":   payment_type,
     }).execute()
     payment = res.data[0]
 
-    # Auto-update debt status to 'paid' if fully covered
+    # Auto-mark debt as paid when balance reaches zero
     debt = get_debt(debt_id)
     if debt and debt["pending_amount"] == 0:
         sb.table("debts").update({"status": "paid"}).eq("id", debt_id).execute()
 
     return payment
+
+
+# ── Debt installment auto-processing ─────────────────────────────────────────
+
+def process_pending_debt_installments(year: int, month: int) -> int:
+    """
+    Idempotent: for each active debt with auto_pay=True, create the monthly
+    installment transaction + debt_payment if it hasn't been created yet.
+    Computes capital/interest split from annual_rate (EA %).
+    Returns the number of new installments created.
+    """
+    import calendar
+    from datetime import date as _date
+
+    sb      = _sb()
+    today   = _date.today()
+    created = 0
+
+    months_es = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+
+    # Active debts with auto_pay enabled
+    debts = sb.table("debts").select(
+        "*, debt_payments(amount, capital_amount, date)"
+    ).eq("auto_pay", True).eq("status", "active").execute().data
+
+    for debt in debts:
+        _compute_debt_stats(debt)
+        if debt["pending_amount"] <= 0:
+            continue
+
+        # Clamp payment_day to last day of the month
+        payment_day = debt.get("payment_day") or 1
+        max_day     = calendar.monthrange(year, month)[1]
+        actual_day  = min(payment_day, max_day)
+        pay_date    = _date(year, month, actual_day)
+
+        # Only process months that have already arrived
+        current_month = _date(today.year, today.month, 1)
+        payment_month = _date(year, month, 1)
+        if payment_month > current_month:
+            continue
+        if payment_month == current_month and pay_date > today:
+            continue
+
+        # Idempotency: skip if a payment already exists this month
+        lo = f"{year}-{month:02d}-01"
+        hi = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
+        existing = sb.table("debt_payments") \
+            .select("id") \
+            .eq("debt_id", debt["id"]) \
+            .gte("date", lo).lt("date", hi) \
+            .execute()
+        if existing.data:
+            continue
+
+        # Capital / interest split
+        balance   = debt["pending_amount"]
+        installment = debt.get("installment_amount") or 0
+        annual_rate = debt.get("annual_rate")
+
+        if annual_rate and annual_rate > 0 and installment > 0:
+            monthly_rate = (1 + annual_rate / 100) ** (1 / 12) - 1
+            interest_amt = round(balance * monthly_rate)
+            capital_amt  = max(min(installment - interest_amt, balance), 0)
+        else:
+            interest_amt = 0
+            capital_amt  = min(installment or balance, balance)
+
+        total_amt = capital_amt + interest_amt
+
+        # Create transaction (expense) if debt has an owner + subcategory
+        tx_id   = None
+        sub_id  = debt.get("subcategory_id")
+        owner   = debt.get("user_id")
+        if sub_id and owner:
+            sub_res = sb.table("subcategories").select("category_id") \
+                .eq("id", sub_id).single().execute()
+            cat_id  = sub_res.data["category_id"] if sub_res.data else _get_or_create_debts_category()
+            tx_res  = sb.table("transactions").insert({
+                "user_id":        owner,
+                "date":           str(pay_date),
+                "category_id":    cat_id,
+                "subcategory_id": sub_id,
+                "description":    f"Cuota {debt['name']} — {months_es[month-1]} {year}",
+                "amount":         total_amt,
+                "type":           "expense",
+                "debt_id":        debt["id"],
+            }).execute()
+            tx_id = tx_res.data[0]["id"]
+
+        # Create debt_payment
+        pay_res = sb.table("debt_payments").insert({
+            "debt_id":         debt["id"],
+            "amount":          total_amt,
+            "capital_amount":  capital_amt,
+            "interest_amount": interest_amt if interest_amt > 0 else None,
+            "date":            str(pay_date),
+            "description":     f"Cuota automática {months_es[month-1]} {year}",
+            "payment_type":    "auto",
+            "transaction_id":  tx_id,
+            "paid_by":         owner,
+        }).execute()
+
+        # Link payment → transaction (back-reference)
+        if tx_id:
+            sb.table("debt_payments").update({"transaction_id": tx_id}) \
+                .eq("id", pay_res.data[0]["id"]).execute()
+
+        created += 1
+
+    return created
 
 
 # ══════════════════════════════════════════════════════════════════════════════

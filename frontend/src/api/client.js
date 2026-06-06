@@ -191,6 +191,11 @@ export async function deleteDebtPayment(paymentId) {
   await api.delete(`/api/debt-payments/${paymentId}`);
 }
 
+export async function processDebtInstallments(year, month) {
+  const response = await api.post('/api/debts/process', null, { params: { year, month } });
+  return response.data;
+}
+
 // ── Supabase — Subscriptions ──────────────────────────────────────────────────
 
 export async function getSubscriptions({ userId = null, includeInactive = false } = {}) {

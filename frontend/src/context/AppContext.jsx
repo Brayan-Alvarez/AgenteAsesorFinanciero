@@ -18,6 +18,7 @@ import {
   getUsers, getCategories,
   getTransactionsDb, createTransactionDb, updateTransactionDb, deleteTransactionDb,
   getSubscriptions, processSubscriptions,
+  getDebts, processDebtInstallments,
 } from '../api/client.js';
 
 const AppContext = createContext(null);
@@ -42,6 +43,7 @@ function mapTxn(item, categories = [], users = []) {
     type:           item.type,
     notes:          item.notes ?? null,
     subscriptionId: item.subscription_id ?? null,  // set when auto-created by a subscription
+    debtId:         item.debt_id ?? null,           // set when this transaction is a debt payment
     user,
   };
 }
@@ -52,6 +54,7 @@ export function AppProvider({ children }) {
   const [categories,     setCategories]     = useState([]);
   const [transactions,   setTransactions]   = useState([]);
   const [subscriptions,  setSubscriptions]  = useState([]);
+  const [debts,          setDebts]          = useState([]);
   const [isLoadingTxns,  setIsLoadingTxns]  = useState(true);
   const [txnsError,      setTxnsError]      = useState(null);
 
@@ -88,26 +91,35 @@ export function AppProvider({ children }) {
         });
       })
       .then(([usersData, catsData]) => {
-        // 3. Process any pending subscription transactions for the current month.
-        //    This is idempotent — safe to call on every page load.
-        return processSubscriptions(year, currentMonth)
-          .then(({ created }) => {
-            if (created > 0) {
-              // New subscription transactions were generated — reload to include them.
-              return getTransactionsDb({ year }).then(txns => {
-                setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
-              });
-            }
-          })
-          .catch(err => console.warn('Subscription auto-processing failed:', err));
+        // 3. Process pending subscriptions + debt installments (idempotent, safe every load).
+        return Promise.all([
+          processSubscriptions(year, currentMonth).catch(err => {
+            console.warn('Subscription auto-processing failed:', err);
+            return { created: 0 };
+          }),
+          processDebtInstallments(year, currentMonth).catch(err => {
+            console.warn('Debt installment auto-processing failed:', err);
+            return { created: 0 };
+          }),
+        ]).then(([subResult, debtResult]) => {
+          if ((subResult.created ?? 0) + (debtResult.created ?? 0) > 0) {
+            return getTransactionsDb({ year }).then(txns => {
+              setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
+            });
+          }
+        });
       })
       .catch(err => setTxnsError(err.message))
       .finally(() => setIsLoadingTxns(false));
 
-    // Subscriptions list — independent, can fail separately
+    // Subscriptions + Debts — independent, can fail separately
     getSubscriptions()
       .then(subs => setSubscriptions(subs))
       .catch(err => console.warn('Failed to load subscriptions:', err));
+
+    getDebts()
+      .then(d => setDebts(d))
+      .catch(err => console.warn('Failed to load debts:', err));
 
     // Legacy Sheets data for Dashboard charts — independent, can fail separately
     Promise.all([getBudget(), getTrend()])
@@ -140,6 +152,7 @@ export function AppProvider({ children }) {
       amount:         Number(txn.amount),
       type:           txn.type,
       notes:          txn.notes ?? null,
+      debt_id:        txn.debtId ?? null,
     });
     setTransactions(prev =>
       [mapTxn(created, categories, users), ...prev]
@@ -244,12 +257,30 @@ export function AppProvider({ children }) {
   // ── Derived helpers ───────────────────────────────────────────────────────
   const getUser = useCallback((id) => users.find(u => u.id === id), [users]);
 
+  // Map subcategory_id → debt for quick lookup in TxnForm
+  const debtsBySubcategoryId = useMemo(() => {
+    const map = {};
+    debts.forEach(d => { if (d.subcategory_id) map[d.subcategory_id] = d; });
+    return map;
+  }, [debts]);
+
+  const reloadDebts = useCallback(async () => {
+    try {
+      const d = await getDebts();
+      setDebts(d);
+    } catch (err) {
+      console.error('Failed to reload debts:', err);
+    }
+  }, []);
+
   const value = useMemo(() => ({
     // Supabase data
     users,
     categories,
     transactions,
     subscriptions,
+    debts,
+    debtsBySubcategoryId,
     isLoadingTxns,
     txnsError,
     getUser,
@@ -280,6 +311,9 @@ export function AppProvider({ children }) {
     removeSubscriptionLocal,
     updateSubscriptionLocal,
 
+    // Debt management
+    reloadDebts,
+
     // Legacy Sheets data (Dashboard)
     apiBudget,
     apiTrend,
@@ -298,6 +332,7 @@ export function AppProvider({ children }) {
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
     reloadSubscriptions, addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
+    debts, debtsBySubcategoryId, reloadDebts,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);

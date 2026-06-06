@@ -294,21 +294,40 @@ function MigrationForm({ source, activeCategories, onMigrate, onCancel, saving, 
   );
 }
 
+// ── Amortization helpers (pure functions, no hooks) ───────────────────────────
+function monthlyRate(annualRatePct) {
+  return (1 + annualRatePct / 100) ** (1 / 12) - 1;
+}
+function nextInstallmentBreakdown(debt) {
+  if (!debt.installment_amount || !debt.annual_rate) return null;
+  const rate     = monthlyRate(debt.annual_rate);
+  const interest = Math.round(debt.pending_amount * rate);
+  const capital  = Math.max(Math.min(debt.installment_amount - interest, debt.pending_amount), 0);
+  return { capital, interest, total: capital + interest };
+}
+
 // ── Debt card ─────────────────────────────────────────────────────────────────
 function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
   const [expanded, setExpanded] = useState(false);
-  const pct    = debt.total_amount > 0 ? ((debt.total_amount - debt.pending_amount) / debt.total_amount) * 100 : 0;
-  const isPaid = debt.status === 'paid' || debt.pending_amount === 0;
-  const owner  = users.find(u => u.id === debt.user_id);
+  const pct        = debt.total_amount > 0 ? (debt.total_capital_paid / debt.total_amount) * 100 : 0;
+  const isPaid     = debt.status === 'paid' || debt.pending_amount === 0;
+  const owner      = users.find(u => u.id === debt.user_id);
+  const nextPayment = nextInstallmentBreakdown(debt);
 
   return (
     <div className="card" style={{ borderLeft: `4px solid ${debt.color}`, padding: 0, overflow: 'hidden' }}>
       <div style={{ padding: '18px 20px' }}>
+        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 16 }}>{debt.name}</span>
               {isPaid && <span className="pill up" style={{ fontSize: 11 }}>Pagada ✓</span>}
+              {debt.auto_pay && !isPaid && (
+                <span style={{ fontSize: 11, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <RefreshCw size={10} /> Auto
+                </span>
+              )}
             </div>
             {debt.description && (
               <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{debt.description}</div>
@@ -317,7 +336,8 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
           {owner && <Avatar user={owner} />}
         </div>
 
-        <div style={{ display: 'flex', gap: 20, marginBottom: 10 }}>
+        {/* KPIs */}
+        <div style={{ display: 'flex', gap: 16, marginBottom: 10, flexWrap: 'wrap' }}>
           <div>
             <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pendiente</div>
             <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: isPaid ? 'var(--green)' : 'var(--text)' }}>
@@ -325,20 +345,51 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total</div>
+            <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Crédito original</div>
             <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-dim)' }}>
               {fmt(debt.total_amount, { compact: true })}
             </div>
           </div>
+          {debt.total_paid > 0 && (
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total pagado</div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-dim)' }}>
+                {fmt(debt.total_paid, { compact: true })}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="bar" style={{ marginBottom: 8 }}>
+        {/* Progress bar — based on capital paid vs total */}
+        <div className="bar" style={{ marginBottom: 6 }}>
           <div className="bar-fill" style={{ width: `${Math.min(pct, 100)}%`, background: isPaid ? 'var(--green)' : debt.color }} />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-mute)', display: 'flex', justifyContent: 'space-between', marginBottom: 14 }} className="mono">
-          <span>{pct.toFixed(0)}% pagado</span>
+        <div style={{ fontSize: 12, color: 'var(--text-mute)', display: 'flex', justifyContent: 'space-between', marginBottom: 10 }} className="mono">
+          <span>{pct.toFixed(0)}% capital pagado</span>
           {debt.due_date && <span>Vence: {new Date(debt.due_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</span>}
         </div>
+
+        {/* Interest breakdown row */}
+        {debt.total_interest_paid > 0 && (
+          <div style={{ display: 'flex', gap: 16, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 8 }}>
+            <span style={{ color: 'var(--text-mute)' }}>
+              Capital pagado: <span className="mono" style={{ color: 'var(--text-dim)' }}>{fmt(debt.total_capital_paid, { compact: true })}</span>
+            </span>
+            <span style={{ color: 'var(--text-mute)' }}>
+              Intereses pagados: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(debt.total_interest_paid, { compact: true })}</span>
+            </span>
+          </div>
+        )}
+
+        {/* Next installment breakdown */}
+        {nextPayment && !isPaid && (
+          <div style={{ display: 'flex', gap: 12, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: debt.color + '14', borderRadius: 8, border: `1px solid ${debt.color}33` }}>
+            <span style={{ fontWeight: 600, color: debt.color }}>Próxima cuota {fmt(nextPayment.total, { compact: true })}</span>
+            <span style={{ color: 'var(--text-mute)' }}>Capital: <span className="mono">{fmt(nextPayment.capital, { compact: true })}</span></span>
+            <span style={{ color: 'var(--text-mute)' }}>Interés: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment.interest, { compact: true })}</span></span>
+            {debt.annual_rate && <span style={{ color: 'var(--text-mute)' }}>{debt.annual_rate}% EA</span>}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8 }}>
           {!isPaid && (
@@ -364,12 +415,22 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
             [...(debt.debt_payments ?? [])].sort((a, b) => b.date.localeCompare(a.date)).map(p => {
               const paidBy = users.find(u => u.id === p.paid_by);
               return (
-                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)', minWidth: 90 }}>
-                    +{fmt(p.amount, { compact: true })}
-                  </span>
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ minWidth: 80 }}>
+                    <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>
+                      +{fmt(p.amount, { compact: true })}
+                    </div>
+                    {/* Capital/interest breakdown per payment */}
+                    {p.capital_amount != null && (
+                      <div style={{ fontSize: 10, color: 'var(--text-mute)' }} className="mono">
+                        K:{fmt(p.capital_amount, { compact: true })}
+                        {p.interest_amount > 0 && <> · I:{fmt(p.interest_amount, { compact: true })}</>}
+                      </div>
+                    )}
+                  </div>
                   <span style={{ fontSize: 12, color: 'var(--text-mute)', flex: 1 }}>
                     {p.description || '—'} · {new Date(p.date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
+                    {p.payment_type === 'auto' && <span style={{ color: 'var(--primary)', marginLeft: 4 }}>🔄</span>}
                   </span>
                   {paidBy && <Avatar user={paidBy} />}
                   <button className="btn" style={{ color: 'var(--text-mute)', padding: '2px 6px' }} onClick={() => onDeletePayment(p.id, debt.id)}>
@@ -445,7 +506,11 @@ function PaymentForm({ debt, users, onSave, onCancel }) {
 function DebtForm({ users, onSave, onCancel }) {
   const [form, setForm] = useState({
     name: '', total_amount: '', user_id: users[0]?.id ?? '', description: '',
-    color: DEBT_COLORS[0], due_date: '', interest_rate: '',
+    color: DEBT_COLORS[0], due_date: '',
+    // Auto-pay
+    auto_pay: false, installment_amount: '', annual_rate: '', payment_day: '',
+    // Historical payments (before tracking)
+    historical_capital_paid: '', historical_interest_paid: '',
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -453,11 +518,18 @@ function DebtForm({ users, onSave, onCancel }) {
     e.preventDefault();
     if (!form.name || !form.total_amount) return;
     onSave({
-      ...form,
-      total_amount:  Number(form.total_amount),
-      interest_rate: form.interest_rate ? Number(form.interest_rate) : null,
-      due_date:      form.due_date || null,
-      user_id:       form.user_id || null,
+      name:                     form.name,
+      total_amount:             Number(form.total_amount),
+      user_id:                  form.user_id || null,
+      description:              form.description || null,
+      color:                    form.color,
+      due_date:                 form.due_date || null,
+      auto_pay:                 form.auto_pay,
+      installment_amount:       form.installment_amount ? Number(form.installment_amount) : null,
+      annual_rate:              form.annual_rate       ? Number(form.annual_rate)       : null,
+      payment_day:              form.payment_day       ? Number(form.payment_day)       : null,
+      historical_capital_paid:  form.historical_capital_paid  ? Number(form.historical_capital_paid)  : 0,
+      historical_interest_paid: form.historical_interest_paid ? Number(form.historical_interest_paid) : 0,
     });
   };
 
@@ -466,12 +538,12 @@ function DebtForm({ users, onSave, onCancel }) {
       <div className="field">
         <label className="field-label">Nombre de la deuda</label>
         <input className="input" value={form.name} onChange={e => set('name', e.target.value)}
-          placeholder="Ej: Tarjeta Visa, Préstamo carro" autoFocus required />
+          placeholder="Ej: Crédito de libre inversión, Préstamo carro" autoFocus required />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="field">
-          <label className="field-label">Monto total (COP)</label>
+          <label className="field-label">Monto total del crédito (COP)</label>
           <input type="number" className="input mono" value={form.total_amount}
             onChange={e => set('total_amount', e.target.value)} placeholder="0" min="1" required />
         </div>
@@ -507,7 +579,67 @@ function DebtForm({ users, onSave, onCancel }) {
       <div className="field">
         <label className="field-label">Descripción <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
         <input className="input" value={form.description} onChange={e => set('description', e.target.value)}
-          placeholder="Ej: Crédito de libre inversión Bancolombia" />
+          placeholder="Ej: Descuento por nómina, Banco Davivienda" />
+      </div>
+
+      {/* ── Auto-pay ──────────────────────────────────────────────────────── */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: form.auto_pay ? 12 : 0 }}>
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 13 }}>Cuota automática mensual</div>
+            <div style={{ fontSize: 12, color: 'var(--text-mute)' }}>Genera una transacción cada mes automáticamente</div>
+          </div>
+          <button type="button" className="btn"
+            style={{ borderColor: form.auto_pay ? 'var(--primary)' : 'var(--border)', background: form.auto_pay ? 'var(--surface-2)' : 'var(--bg-2)', fontSize: 13 }}
+            onClick={() => set('auto_pay', !form.auto_pay)}>
+            {form.auto_pay ? <><Check size={13} /> Activada</> : 'Activar'}
+          </button>
+        </div>
+
+        {form.auto_pay && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="field">
+              <label className="field-label">Cuota mensual (COP)</label>
+              <input type="number" className="input mono" value={form.installment_amount}
+                onChange={e => set('installment_amount', e.target.value)} placeholder="0" min="1" required={form.auto_pay} />
+            </div>
+            <div className="field">
+              <label className="field-label">Día de descuento</label>
+              <input type="number" className="input mono" value={form.payment_day}
+                onChange={e => set('payment_day', e.target.value)} placeholder="Ej: 5" min="1" max="31" />
+            </div>
+            <div className="field">
+              <label className="field-label">Tasa EA % <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(anual)</span></label>
+              <input type="number" className="input mono" value={form.annual_rate}
+                onChange={e => set('annual_rate', e.target.value)} placeholder="Ej: 18.5" step="0.01" min="0" />
+            </div>
+          </div>
+        )}
+        {form.auto_pay && form.annual_rate && (
+          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: -4, marginBottom: 8 }}>
+            Tasa mensual efectiva ≈ {(((1 + Number(form.annual_rate)/100)**(1/12) - 1) * 100).toFixed(3)}%
+          </div>
+        )}
+      </div>
+
+      {/* ── Historical payments ───────────────────────────────────────────── */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Pagos históricos (antes de registrar)</div>
+        <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 12 }}>
+          Si ya habías hecho abonos antes de registrar esta deuda, ingrésalos aquí para que el saldo sea correcto. No se crea ninguna transacción.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="field">
+            <label className="field-label">Capital ya pagado (COP)</label>
+            <input type="number" className="input mono" value={form.historical_capital_paid}
+              onChange={e => set('historical_capital_paid', e.target.value)} placeholder="0" min="0" />
+          </div>
+          <div className="field">
+            <label className="field-label">Intereses ya pagados (COP)</label>
+            <input type="number" className="input mono" value={form.historical_interest_paid}
+              onChange={e => set('historical_interest_paid', e.target.value)} placeholder="0" min="0" />
+          </div>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
@@ -1341,7 +1473,7 @@ export default function Budget() {
   };
 
   // ── Debt actions ─────────────────────────────────────────────────────────────
-  const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await Promise.all([loadDebts(), reloadCategories()]); } catch (err) { console.error(err); } };
   const handleDeleteDebt    = async (id)             => { if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return; try { await deleteDebt(id); await loadDebts(); } catch (err) { console.error(err); } };
   const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
   const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };

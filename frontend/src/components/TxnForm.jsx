@@ -5,7 +5,7 @@ import Avatar from './Avatar.jsx';
 import CategorySelector from './CategorySelector.jsx';
 
 export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
-  const { users, categories } = useAppContext();
+  const { users, categories, debtsBySubcategoryId } = useAppContext();
 
   // Only active categories are offered when creating/editing a transaction
   const activeCategories = categories.filter(c => c.is_active !== false);
@@ -41,10 +41,18 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isEdit = !!initial?.id;
 
+  // If the selected subcategory belongs to a debt, show a badge and include debt_id on save
+  const linkedDebt = form.subcategoryId ? debtsBySubcategoryId?.[form.subcategoryId] : null;
+
   const submit = (e) => {
     e.preventDefault();
     if (!form.desc || !form.amount) return;
-    onSave({ ...form, id: initial?.id, amount: Number(form.amount) });
+    onSave({
+      ...form,
+      id:     initial?.id,
+      amount: Number(form.amount),
+      debtId: linkedDebt?.id ?? null,
+    });
   };
 
   return (
@@ -143,6 +151,27 @@ export default function TxnForm({ initial, onSave, onCancel, onDelete }) {
           subcategoryId={form.subcategoryId}
           onChange={(catId, subId) => setForm(f => ({ ...f, categoryId: catId, subcategoryId: subId }))}
         />
+        {/* Badge when the selected subcategory is linked to a debt */}
+        {linkedDebt && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginTop: 6,
+            padding: '7px 12px', borderRadius: 8,
+            background: linkedDebt.color + '18',
+            border: `1px solid ${linkedDebt.color}44`,
+            fontSize: 12,
+          }}>
+            <span style={{ fontSize: 16 }}>💳</span>
+            <div>
+              <span style={{ fontWeight: 600, color: linkedDebt.color }}>{linkedDebt.name}</span>
+              <span style={{ color: 'var(--text-mute)', marginLeft: 6 }}>
+                Este pago se abonará a la deuda
+                {linkedDebt.pending_amount > 0 && (
+                  <> · Pendiente: <strong className="mono">${linkedDebt.pending_amount.toLocaleString('es-CO')}</strong></>
+                )}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Notes */}

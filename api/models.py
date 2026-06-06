@@ -244,6 +244,7 @@ class TransactionCreate(BaseModel):
     type: str                           # 'income' | 'expense'
     subcategory_id: Optional[str] = None
     notes: Optional[str] = None
+    debt_id: Optional[str] = None       # set when this transaction is a debt payment
 
 class TransactionUpdate(BaseModel):
     user_id: Optional[str] = None
@@ -254,6 +255,7 @@ class TransactionUpdate(BaseModel):
     amount: Optional[int] = None
     type: Optional[str] = None
     notes: Optional[str] = None
+    debt_id: Optional[str] = None
 
 class CategoryMigrationRequest(BaseModel):
     """Bulk-reassign all transactions from one category to another."""
@@ -271,12 +273,24 @@ class DebtOut(BaseModel):
     name: str
     description: Optional[str]
     total_amount: int
-    pending_amount: int                 # computed: total - sum(payments)
+    pending_amount: int          # computed: total - historical_capital - sum(capital of payments)
+    total_capital_paid: int = 0  # historical + tracked capital payments
+    total_interest_paid: int = 0 # historical + tracked interest payments
+    total_paid: int = 0          # total money out of pocket (capital + interest)
     user_id: Optional[str]
     color: str
     status: str
     due_date: Optional[str]
-    interest_rate: Optional[float]
+    # Auto-pay configuration
+    installment_amount: Optional[int] = None
+    annual_rate: Optional[float] = None   # annual effective rate (EA %)
+    payment_day: Optional[int] = None
+    auto_pay: bool = False
+    # Historical data (payments made before tracking started)
+    historical_capital_paid: int = 0
+    historical_interest_paid: int = 0
+    # Category link: subcategory under "Finanzas y deudas" for transactions
+    subcategory_id: Optional[str] = None
     created_at: str
     debt_payments: list[dict] = []
     users: Optional[dict] = None
@@ -288,7 +302,14 @@ class DebtCreate(BaseModel):
     description: Optional[str] = None
     color: str = "#dc2626"
     due_date: Optional[str] = None
-    interest_rate: Optional[float] = None
+    # Auto-pay
+    installment_amount: Optional[int] = None
+    annual_rate: Optional[float] = None
+    payment_day: Optional[int] = None
+    auto_pay: bool = False
+    # Historical payments before tracking
+    historical_capital_paid: int = 0
+    historical_interest_paid: int = 0
 
 class DebtUpdate(BaseModel):
     name: Optional[str] = None
@@ -297,8 +318,13 @@ class DebtUpdate(BaseModel):
     description: Optional[str] = None
     color: Optional[str] = None
     due_date: Optional[str] = None
-    interest_rate: Optional[float] = None
     status: Optional[str] = None
+    installment_amount: Optional[int] = None
+    annual_rate: Optional[float] = None
+    payment_day: Optional[int] = None
+    auto_pay: Optional[bool] = None
+    historical_capital_paid: Optional[int] = None
+    historical_interest_paid: Optional[int] = None
 
 class DebtPaymentCreate(BaseModel):
     amount: int
@@ -306,6 +332,9 @@ class DebtPaymentCreate(BaseModel):
     paid_by: Optional[str] = None
     description: Optional[str] = None
     notes: Optional[str] = None
+    # Optional capital/interest split for manual extra payments
+    capital_amount: Optional[int] = None
+    interest_amount: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

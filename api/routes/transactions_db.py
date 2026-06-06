@@ -37,7 +37,7 @@ async def create_transaction(body: TransactionCreate):
         return q.create_transaction(
             body.user_id, body.date, body.category_id,
             body.description, body.amount, body.type,
-            body.subcategory_id, body.notes,
+            body.subcategory_id, body.notes, body.debt_id,
         )
     except Exception as exc:
         logger.exception("POST /api/transactions/db failed.")

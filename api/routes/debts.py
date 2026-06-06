@@ -5,6 +5,7 @@ GET    /api/debts?user_id=
 POST   /api/debts
 PUT    /api/debts/{id}
 DELETE /api/debts/{id}
+POST   /api/debts/process?year=&month=   → idempotent auto-installment generator
 POST   /api/debts/{id}/payments
 DELETE /api/debt-payments/{id}
 """
@@ -32,14 +33,39 @@ async def list_debts(user_id: Optional[str] = Query(None)):
 async def create_debt(body: DebtCreate):
     try:
         debt = q.create_debt(
-            body.name, body.total_amount, body.user_id,
-            body.description, body.color, body.due_date, body.interest_rate,
+            name                    = body.name,
+            total_amount            = body.total_amount,
+            user_id                 = body.user_id,
+            description             = body.description,
+            color                   = body.color,
+            due_date                = body.due_date,
+            installment_amount      = body.installment_amount,
+            annual_rate             = body.annual_rate,
+            payment_day             = body.payment_day,
+            auto_pay                = body.auto_pay,
+            historical_capital_paid = body.historical_capital_paid,
+            historical_interest_paid= body.historical_interest_paid,
         )
-        # Return full object with pending_amount
         return q.get_debt(debt["id"])
     except Exception as exc:
         logger.exception("POST /api/debts failed.")
         raise HTTPException(500, "Could not create debt.") from exc
+
+
+# NOTE: /debts/process must be registered before /debts/{debt_id} to avoid
+# FastAPI treating "process" as a path parameter.
+@router.post("/debts/process")
+async def process_debt_installments(
+    year:  int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+) -> dict:
+    """Idempotent: creates auto-pay installment transactions for all eligible debts."""
+    try:
+        created = q.process_pending_debt_installments(year, month)
+        return {"created": created}
+    except Exception as exc:
+        logger.exception("POST /api/debts/process failed.")
+        raise HTTPException(500, "Could not process debt installments.") from exc
 
 
 @router.put("/debts/{debt_id}", response_model=DebtOut)
@@ -48,8 +74,7 @@ async def update_debt(debt_id: str, body: DebtUpdate):
         fields = body.model_dump(exclude_none=True)
         if not fields:
             raise HTTPException(400, "No fields to update.")
-        q.update_debt(debt_id, **fields)
-        return q.get_debt(debt_id)
+        return q.update_debt(debt_id, **fields)
     except HTTPException:
         raise
     except Exception as exc:
@@ -70,8 +95,14 @@ async def delete_debt(debt_id: str):
 async def add_payment(debt_id: str, body: DebtPaymentCreate):
     try:
         return q.create_debt_payment(
-            debt_id, body.amount, body.date,
-            body.paid_by, body.description, body.notes,
+            debt_id         = debt_id,
+            amount          = body.amount,
+            date            = body.date,
+            paid_by         = body.paid_by,
+            description     = body.description,
+            notes           = body.notes,
+            capital_amount  = body.capital_amount,
+            interest_amount = body.interest_amount,
         )
     except Exception as exc:
         logger.exception("POST /api/debts/%s/payments failed.", debt_id)
