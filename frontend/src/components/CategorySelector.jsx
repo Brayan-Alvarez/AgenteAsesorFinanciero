@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 
 /**
@@ -8,6 +9,9 @@ import { Check, ChevronDown } from 'lucide-react';
  * Selecting a category clears the subcategory. Selecting a subcategory
  * also sets the parent category automatically.
  *
+ * The dropdown is rendered via React portal into document.body at position:fixed
+ * so it can escape overflow:auto/hidden containers like modals without being clipped.
+ *
  * Props:
  *   categories   — active categories array from AppContext (with subcategories nested)
  *   categoryId   — current selected category UUID (or '')
@@ -15,16 +19,39 @@ import { Check, ChevronDown } from 'lucide-react';
  *   onChange     — (categoryId, subcategoryId) => void
  */
 export default function CategorySelector({ categories, categoryId, subcategoryId, onChange }) {
-  const [open,   setOpen]   = useState(false);
-  const [search, setSearch] = useState('');
-  const ref      = useRef();
-  const searchRef = useRef();
+  const [open,        setOpen]        = useState(false);
+  const [search,      setSearch]      = useState('');
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
-  // Close on outside click
+  const triggerRef  = useRef(); // wrapper div (for outside-click detection)
+  const dropdownRef = useRef(); // portal div (also excluded from outside-click)
+  const searchRef   = useRef();
+
+  // Compute dropdown position from the trigger button's bounding rect
+  const openDropdown = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      // If there's not enough space below, open upward
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const maxH = 480;
+      const openUp = spaceBelow < Math.min(maxH, 300) && rect.top > spaceBelow;
+      setDropdownPos({
+        top:    openUp ? undefined : rect.bottom + 4,
+        bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
+        left:   rect.left,
+        width:  rect.width,
+      });
+    }
+    setOpen(o => !o);
+  };
+
+  // Close on outside click — checks both the trigger wrapper and the portal dropdown
   useEffect(() => {
     if (!open) return;
     const handler = (e) => {
-      if (!ref.current?.contains(e.target)) { setOpen(false); setSearch(''); }
+      const inTrigger  = triggerRef.current?.contains(e.target);
+      const inDropdown = dropdownRef.current?.contains(e.target);
+      if (!inTrigger && !inDropdown) { setOpen(false); setSearch(''); }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -96,12 +123,12 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
   };
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={triggerRef} style={{ position: 'relative' }}>
       {/* Trigger button */}
       <button
         type="button"
         className="select"
-        onClick={() => setOpen(o => !o)}
+        onClick={openDropdown}
         style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -110,14 +137,26 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
         <ChevronDown size={14} style={{ color: 'var(--text-mute)', flexShrink: 0 }} />
       </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div style={{
-          position: 'absolute', zIndex: 300, top: 'calc(100% + 4px)', left: 0, right: 0,
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-          display: 'flex', flexDirection: 'column', maxHeight: 480,
-        }}>
+      {/* Dropdown — rendered in document.body via portal to escape modal overflow clipping */}
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top:    dropdownPos.top,
+            bottom: dropdownPos.bottom,
+            left:   dropdownPos.left,
+            width:  dropdownPos.width,
+            zIndex: 1000,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: 480,
+          }}
+        >
           {/* Search */}
           <div style={{ padding: '8px 8px 6px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             <input
@@ -191,7 +230,8 @@ export default function CategorySelector({ categories, categoryId, subcategoryId
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
