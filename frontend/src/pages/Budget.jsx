@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Plus, RefreshCw, Trash2, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Edit2, Plus, RefreshCw, Trash2, TrendingUp, X } from 'lucide-react';
 
 import { useAppContext } from '../context/AppContext.jsx';
 import { filterTxns } from '../data/seed.js';
@@ -18,7 +18,7 @@ import {
   getDebts, createDebt, deleteDebt, addDebtPayment, deleteDebtPayment,
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
   migrateCategory,
-  createSubscription, cancelSubscription,
+  createSubscription, updateSubscription, cancelSubscription,
   getIncome, upsertIncome, getIncomeHistory,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
@@ -640,8 +640,141 @@ function SubscriptionForm({ users, onSave, onCancel }) {
   );
 }
 
+// ── Subscription edit form ────────────────────────────────────────────────────
+// Same fields as creation except start_date (never changes) and category (always auto).
+// Edits only affect future transactions — past ones keep their original amount.
+function SubscriptionEditForm({ sub, users, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    icon:        sub.icon,
+    name:        sub.name,
+    amount:      String(sub.amount),
+    billing_day: sub.billing_day,
+    user_id:     sub.user_id ?? '',
+    color:       sub.color,
+    notes:       sub.notes ?? '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState(null);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.amount) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        icon:        form.icon,
+        name:        form.name.trim(),
+        amount:      Number(form.amount),
+        billing_day: Number(form.billing_day),
+        user_id:     form.user_id || null,
+        color:       form.color,
+        notes:       form.notes.trim() || null,
+      });
+    } catch (err) {
+      setError(err?.response?.data?.detail ?? err?.message ?? 'Error desconocido');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit}>
+      <div style={{
+        fontSize: 12, color: 'var(--text-mute)', marginBottom: 16,
+        padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 6,
+      }}>
+        Los cambios aplican solo a las transacciones futuras. Las ya creadas conservan su monto original.
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Icono</label>
+          <EmojiPicker value={form.icon} onChange={v => set('icon', v)} />
+        </div>
+        <div className="field">
+          <label className="field-label">Nombre</label>
+          <input className="input" value={form.name} onChange={e => set('name', e.target.value)}
+            placeholder="Ej: Netflix, Spotify" autoFocus required />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Monto mensual (COP)</label>
+          <input type="number" className="input mono" value={form.amount}
+            onChange={e => set('amount', e.target.value)} placeholder="0" min="1" required />
+        </div>
+        <div className="field">
+          <label className="field-label">Día de cobro (1–31)</label>
+          <input type="number" className="input mono" value={form.billing_day}
+            onChange={e => set('billing_day', e.target.value)} min="1" max="31" required />
+        </div>
+      </div>
+
+      {users.length > 0 && (
+        <div className="field">
+          <label className="field-label">
+            Asignar a <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span>
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="btn"
+              style={{ flex: 1, justifyContent: 'center', fontSize: 13,
+                borderColor: !form.user_id ? 'var(--primary)' : 'var(--border)',
+                background:  !form.user_id ? 'var(--surface-2)' : 'var(--bg-2)' }}
+              onClick={() => set('user_id', '')}>
+              Pareja
+            </button>
+            {users.map(u => (
+              <button key={u.id} type="button" className="btn"
+                style={{ flex: 1, justifyContent: 'center',
+                  borderColor: form.user_id === u.id ? u.color : 'var(--border)',
+                  background:  form.user_id === u.id ? 'var(--surface-2)' : 'var(--bg-2)' }}
+                onClick={() => set('user_id', u.id)}>
+                <Avatar user={u} /> {u.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="field">
+        <label className="field-label">Color</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {SUB_COLORS.map(c => (
+            <button key={c} type="button" onClick={() => set('color', c)}
+              style={{ width: 28, height: 28, borderRadius: '50%', background: c, border: 'none',
+                cursor: 'pointer', outline: form.color === c ? `3px solid ${c}` : '3px solid transparent',
+                outlineOffset: 2 }} />
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Notas <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
+        <input className="input" value={form.notes} onChange={e => set('notes', e.target.value)}
+          placeholder="Ej: Plan familiar, cuenta compartida" />
+      </div>
+
+      {error && (
+        <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 12px',
+          background: 'rgba(239,68,68,0.1)', borderRadius: 6, marginBottom: 8 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn primary" disabled={saving}>
+          {saving ? 'Guardando…' : <><Check size={14} /> Guardar cambios</>}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Subscription card ─────────────────────────────────────────────────────────
-function SubscriptionCard({ sub, users, onCancel }) {
+function SubscriptionCard({ sub, users, onEdit, onCancel }) {
   const user      = users.find(u => u.id === sub.user_id);
   const startDate = new Date(sub.start_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -677,7 +810,10 @@ function SubscriptionCard({ sub, users, onCancel }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button className="btn" style={{ fontSize: 12 }} onClick={() => onEdit(sub)}>
+            <Edit2 size={13} /> Editar
+          </button>
           <button className="btn" style={{ color: 'var(--red)', fontSize: 12 }} onClick={() => onCancel(sub)}>
             <X size={13} /> Cancelar suscripción
           </button>
@@ -837,7 +973,7 @@ export default function Budget() {
     users, categories, transactions, subscriptions, userFilter, setUserFilter,
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
-    addSubscriptionLocal, removeSubscriptionLocal,
+    addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
   } = useAppContext();
 
   // Only show active categories in Budget
@@ -863,6 +999,7 @@ export default function Budget() {
   const [showDebtForm,   setShowDebtForm]   = useState(false);
   const [showCatForm,    setShowCatForm]    = useState(false);
   const [showSubForm,    setShowSubForm]    = useState(false); // subscription creation modal
+  const [editingSub,     setEditingSub]     = useState(null);  // subscription being edited
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
   const [subFormError,  setSubFormError]  = useState(null);
   const [subFormSaving, setSubFormSaving] = useState(false);
@@ -1139,6 +1276,12 @@ export default function Budget() {
     // If the "Suscripciones" category didn't exist locally, the backend may have
     // just created it — reload categories so the budget row appears immediately.
     if (!subscriptionsCat) await reloadCategories();
+  };
+
+  const handleEditSubscription = async (data) => {
+    const updated = await updateSubscription(editingSub.id, data);
+    updateSubscriptionLocal(updated);
+    setEditingSub(null);
   };
 
   const handleCancelSubscription = async (sub) => {
@@ -1785,6 +1928,7 @@ export default function Budget() {
                   key={sub.id}
                   sub={sub}
                   users={users}
+                  onEdit={setEditingSub}
                   onCancel={handleCancelSubscription}
                 />
               ))}
@@ -1854,6 +1998,17 @@ export default function Budget() {
             users={users}
             onSave={handleCreateSubscription}
             onCancel={() => setShowSubForm(false)}
+          />
+        )}
+      </Modal>
+
+      <Modal open={!!editingSub} onClose={() => setEditingSub(null)} title={`Editar — ${editingSub?.name ?? ''}`}>
+        {editingSub && (
+          <SubscriptionEditForm
+            sub={editingSub}
+            users={users}
+            onSave={handleEditSubscription}
+            onCancel={() => setEditingSub(null)}
           />
         )}
       </Modal>

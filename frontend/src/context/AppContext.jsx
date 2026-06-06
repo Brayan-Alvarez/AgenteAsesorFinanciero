@@ -222,6 +222,10 @@ export function AppProvider({ children }) {
     setSubscriptions(prev => prev.filter(s => s.id !== subId));
   }, []);
 
+  const updateSubscriptionLocal = useCallback((updated) => {
+    setSubscriptions(prev => prev.map(s => s.id === updated.id ? updated : s));
+  }, []);
+
   // Re-fetch current-year transactions after a bulk operation (e.g. category migration).
   const reloadTransactions = useCallback(async () => {
     const year = new Date().getFullYear();
@@ -274,6 +278,7 @@ export function AppProvider({ children }) {
     reloadSubscriptions,
     addSubscriptionLocal,
     removeSubscriptionLocal,
+    updateSubscriptionLocal,
 
     // Legacy Sheets data (Dashboard)
     apiBudget,
@@ -292,7 +297,7 @@ export function AppProvider({ children }) {
     addTransaction, updateTransaction, deleteTransaction,
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
-    reloadSubscriptions, addSubscriptionLocal, removeSubscriptionLocal,
+    reloadSubscriptions, addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);
