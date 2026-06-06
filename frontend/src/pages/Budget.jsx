@@ -1319,11 +1319,11 @@ export default function Budget() {
               const budgeted = isSubsCat ? subsAmountForView : getBudgetAmount(cat.id);
               // For the all-users breakdown column, use subscriptionsByUser for the subs category
               // (no manual budget rows exist for it, so byUser would otherwise be empty).
+              const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
               const effectiveByUser = isSubsCat ? subscriptionsByUser : byUser;
               const spent    = spentByCategory[cat.id] ?? 0;
               const pct      = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 0;
               const over     = budgeted > 0 && spent > budgeted;
-              const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
               const activeSubs = (cat.subcategories || []).filter(s => s.is_active !== false);
 
               return (
