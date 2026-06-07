@@ -35,8 +35,7 @@ from langgraph.prebuilt import ToolNode
 
 from agent.llm_factory import get_llm
 from agent.prompts import FINANCIAL_ADVISOR_SYSTEM_PROMPT
-from agent.tools import TOOLS
-from data.sheets_loader import SPANISH_MONTHS
+from agent.tools import TOOLS, SPANISH_MONTHS
 
 load_dotenv()
 
