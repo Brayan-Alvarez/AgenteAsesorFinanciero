@@ -414,6 +414,7 @@ def create_debt(
     installment_amount:      Optional[int]   = None,
     annual_rate:             Optional[float] = None,
     payment_day:             Optional[int]   = None,
+    payment_day_2:           Optional[int]   = None,
     auto_pay:                bool            = False,
     historical_capital_paid: int             = 0,
     historical_interest_paid:int             = 0,
@@ -429,6 +430,7 @@ def create_debt(
         "installment_amount":       installment_amount,
         "annual_rate":              annual_rate,
         "payment_day":              payment_day,
+        "payment_day_2":            payment_day_2,
         "auto_pay":                 auto_pay,
         "historical_capital_paid":  historical_capital_paid,
         "historical_interest_paid": historical_interest_paid,
@@ -512,12 +514,95 @@ def create_debt_payment(
 
 # ── Debt installment auto-processing ─────────────────────────────────────────
 
+def _create_single_installment(
+    sb, debt: dict, pay_date, installment: int, annual_rate, months_es: list
+) -> bool:
+    """
+    Creates ONE auto-payment (transaction + debt_payment) for the given date.
+    Idempotent: returns False without creating if an auto payment on that
+    exact date already exists.  Returns True when a new payment is created.
+    """
+    # Idempotency: one auto payment per debt per calendar date
+    existing = sb.table("debt_payments") \
+        .select("id") \
+        .eq("debt_id", debt["id"]) \
+        .eq("date", str(pay_date)) \
+        .eq("payment_type", "auto") \
+        .execute()
+    if existing.data:
+        return False
+
+    # Re-fetch current balance so the second payment of the month uses the
+    # updated balance after the first one was applied.
+    fresh = sb.table("debts") \
+        .select("*, debt_payments(amount, capital_amount, date)") \
+        .eq("id", debt["id"]).single().execute()
+    if not fresh.data:
+        return False
+    _compute_debt_stats(fresh.data)
+    balance = fresh.data["pending_amount"]
+    if balance <= 0:
+        return False
+
+    # Capital / interest split (annual_rate=0 or None → all capital)
+    if annual_rate and annual_rate > 0 and installment > 0:
+        monthly_rate = (1 + annual_rate / 100) ** (1 / 12) - 1
+        interest_amt = round(balance * monthly_rate)
+        capital_amt  = max(min(installment - interest_amt, balance), 0)
+    else:
+        interest_amt = 0
+        capital_amt  = min(installment or balance, balance)
+
+    total_amt = capital_amt + interest_amt
+    month     = pay_date.month
+    year      = pay_date.year
+
+    # Create transaction if debt has owner + subcategory
+    tx_id  = None
+    sub_id = debt.get("subcategory_id")
+    owner  = debt.get("user_id")
+    if sub_id and owner:
+        sub_res = sb.table("subcategories").select("category_id") \
+            .eq("id", sub_id).single().execute()
+        cat_id  = sub_res.data["category_id"] if sub_res.data else _get_or_create_debts_category()
+        tx_res  = sb.table("transactions").insert({
+            "user_id":        owner,
+            "date":           str(pay_date),
+            "category_id":    cat_id,
+            "subcategory_id": sub_id,
+            "description":    f"Cuota {debt['name']} — {months_es[month-1]} {year}",
+            "amount":         total_amt,
+            "type":           "expense",
+            "debt_id":        debt["id"],
+        }).execute()
+        tx_id = tx_res.data[0]["id"]
+
+    pay_res = sb.table("debt_payments").insert({
+        "debt_id":         debt["id"],
+        "amount":          total_amt,
+        "capital_amount":  capital_amt,
+        "interest_amount": interest_amt if interest_amt > 0 else None,
+        "date":            str(pay_date),
+        "description":     f"Cuota automática {months_es[month-1]} {year}",
+        "payment_type":    "auto",
+        "transaction_id":  tx_id,
+        "paid_by":         owner,
+    }).execute()
+
+    if tx_id:
+        sb.table("debt_payments").update({"transaction_id": tx_id}) \
+            .eq("id", pay_res.data[0]["id"]).execute()
+
+    return True
+
+
 def process_pending_debt_installments(year: int, month: int) -> int:
     """
-    Idempotent: for each active debt with auto_pay=True, create the monthly
-    installment transaction + debt_payment if it hasn't been created yet.
-    Computes capital/interest split from annual_rate (EA %).
-    Returns the number of new installments created.
+    Idempotent: for each active debt with auto_pay=True, create auto
+    installment transactions for all configured payment days in the month.
+    Supports two payment days (payment_day + payment_day_2) for bi-weekly debts.
+    Each payment day is idempotent independently (keyed by exact date).
+    Returns the number of new payments created.
     """
     import calendar
     from datetime import date as _date
@@ -527,6 +612,13 @@ def process_pending_debt_installments(year: int, month: int) -> int:
     created = 0
 
     months_es = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+
+    current_month = _date(today.year, today.month, 1)
+    payment_month = _date(year, month, 1)
+    if payment_month > current_month:
+        return 0  # Never process future months
+
+    max_day = calendar.monthrange(year, month)[1]
 
     # Active debts with auto_pay enabled
     debts = sb.table("debts").select(
@@ -538,85 +630,20 @@ def process_pending_debt_installments(year: int, month: int) -> int:
         if debt["pending_amount"] <= 0:
             continue
 
-        # Clamp payment_day to last day of the month
-        payment_day = debt.get("payment_day") or 1
-        max_day     = calendar.monthrange(year, month)[1]
-        actual_day  = min(payment_day, max_day)
-        pay_date    = _date(year, month, actual_day)
-
-        # Only process months that have already arrived
-        current_month = _date(today.year, today.month, 1)
-        payment_month = _date(year, month, 1)
-        if payment_month > current_month:
-            continue
-        if payment_month == current_month and pay_date > today:
-            continue
-
-        # Idempotency: skip if a payment already exists this month
-        lo = f"{year}-{month:02d}-01"
-        hi = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
-        existing = sb.table("debt_payments") \
-            .select("id") \
-            .eq("debt_id", debt["id"]) \
-            .gte("date", lo).lt("date", hi) \
-            .execute()
-        if existing.data:
-            continue
-
-        # Capital / interest split
-        balance   = debt["pending_amount"]
         installment = debt.get("installment_amount") or 0
-        annual_rate = debt.get("annual_rate")
+        annual_rate = debt.get("annual_rate")  # None or 0 → interest-free
 
-        if annual_rate and annual_rate > 0 and installment > 0:
-            monthly_rate = (1 + annual_rate / 100) ** (1 / 12) - 1
-            interest_amt = round(balance * monthly_rate)
-            capital_amt  = max(min(installment - interest_amt, balance), 0)
-        else:
-            interest_amt = 0
-            capital_amt  = min(installment or balance, balance)
+        # Collect all configured payment days, clamped to actual month length
+        days = [d for d in [debt.get("payment_day") or 1, debt.get("payment_day_2")] if d]
+        days = sorted(set(min(d, max_day) for d in days))
 
-        total_amt = capital_amt + interest_amt
-
-        # Create transaction (expense) if debt has an owner + subcategory
-        tx_id   = None
-        sub_id  = debt.get("subcategory_id")
-        owner   = debt.get("user_id")
-        if sub_id and owner:
-            sub_res = sb.table("subcategories").select("category_id") \
-                .eq("id", sub_id).single().execute()
-            cat_id  = sub_res.data["category_id"] if sub_res.data else _get_or_create_debts_category()
-            tx_res  = sb.table("transactions").insert({
-                "user_id":        owner,
-                "date":           str(pay_date),
-                "category_id":    cat_id,
-                "subcategory_id": sub_id,
-                "description":    f"Cuota {debt['name']} — {months_es[month-1]} {year}",
-                "amount":         total_amt,
-                "type":           "expense",
-                "debt_id":        debt["id"],
-            }).execute()
-            tx_id = tx_res.data[0]["id"]
-
-        # Create debt_payment
-        pay_res = sb.table("debt_payments").insert({
-            "debt_id":         debt["id"],
-            "amount":          total_amt,
-            "capital_amount":  capital_amt,
-            "interest_amount": interest_amt if interest_amt > 0 else None,
-            "date":            str(pay_date),
-            "description":     f"Cuota automática {months_es[month-1]} {year}",
-            "payment_type":    "auto",
-            "transaction_id":  tx_id,
-            "paid_by":         owner,
-        }).execute()
-
-        # Link payment → transaction (back-reference)
-        if tx_id:
-            sb.table("debt_payments").update({"transaction_id": tx_id}) \
-                .eq("id", pay_res.data[0]["id"]).execute()
-
-        created += 1
+        for day in days:
+            pay_date = _date(year, month, day)
+            # Don't process payments that haven't arrived yet (current month only)
+            if payment_month == current_month and pay_date > today:
+                continue
+            if _create_single_installment(sb, debt, pay_date, installment, annual_rate, months_es):
+                created += 1
 
     return created
 

@@ -136,8 +136,8 @@ function CategoryForm({ currentMaxOrder, onSave, onCancel }) {
       <div className="field">
         <label className="field-label">Tipo</label>
         <div style={{ display: 'flex', gap: 8 }}>
-          {[['variable','Variable — gastos que cambian mes a mes'],
-            ['fixed',   'Fijo — monto constante cada mes']].map(([val, label]) => (
+          {[['variable','Variable'],
+            ['fixed',   'Fijo']].map(([val, label]) => (
             <button
               key={val} type="button" className="btn"
               style={{
@@ -147,7 +147,7 @@ function CategoryForm({ currentMaxOrder, onSave, onCancel }) {
               }}
               onClick={() => set('type', val)}
             >
-              {form.type === val && <Check size={13} />} {val === 'variable' ? 'Variable' : 'Fijo'}
+              {form.type === val && <Check size={13} />} {label}
             </button>
           ))}
         </div>
@@ -321,7 +321,12 @@ function calcHistoricalInterest(P, B, C, r) {
   return Math.max(Math.round(n * C) - Math.round(P - B), 0);
 }
 function nextInstallmentBreakdown(debt) {
-  if (!debt.installment_amount || !debt.annual_rate) return null;
+  if (!debt.installment_amount) return null;
+  // Rate = 0 or not set → interest-free, full installment goes to capital
+  if (!debt.annual_rate || debt.annual_rate === 0) {
+    const capital = Math.min(debt.installment_amount, debt.pending_amount);
+    return { capital, interest: 0, total: capital };
+  }
   const rate     = monthlyRate(debt.annual_rate);
   const interest = Math.round(debt.pending_amount * rate);
   const capital  = Math.max(Math.min(debt.installment_amount - interest, debt.pending_amount), 0);
@@ -345,11 +350,15 @@ function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 16 }}>{debt.name}</span>
               {isPaid && <span className="pill up" style={{ fontSize: 11 }}>Pagada ✓</span>}
-              {debt.auto_pay && !isPaid && (
-                <span style={{ fontSize: 11, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <RefreshCw size={10} /> Auto
-                </span>
-              )}
+              {debt.auto_pay && !isPaid && (() => {
+                const days = [debt.payment_day, debt.payment_day_2].filter(Boolean);
+                return (
+                  <span style={{ fontSize: 11, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <RefreshCw size={10} />
+                    Auto · día{days.length > 1 ? 's' : ''} {days.join(' y ')}
+                  </span>
+                );
+              })()}
             </div>
             {debt.description && (
               <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{debt.description}</div>
@@ -391,25 +400,38 @@ function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment
           {debt.due_date && <span>Vence: {new Date(debt.due_date + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</span>}
         </div>
 
-        {/* Interest breakdown row */}
-        {debt.total_interest_paid > 0 && (
+        {/* Capital/interest breakdown — always show once at least one payment is tracked */}
+        {debt.total_capital_paid > 0 && (
           <div style={{ display: 'flex', gap: 16, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 8 }}>
             <span style={{ color: 'var(--text-mute)' }}>
               Capital pagado: <span className="mono" style={{ color: 'var(--text-dim)' }}>{fmt(debt.total_capital_paid, { compact: true })}</span>
             </span>
             <span style={{ color: 'var(--text-mute)' }}>
-              Intereses pagados: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(debt.total_interest_paid, { compact: true })}</span>
+              Intereses pagados:{' '}
+              <span className="mono" style={{ color: debt.total_interest_paid > 0 ? 'var(--amber)' : 'var(--green)' }}>
+                {fmt(debt.total_interest_paid, { compact: true })}
+              </span>
+              {debt.total_interest_paid === 0 && (
+                <span style={{ color: 'var(--green)', marginLeft: 4 }}>✓ sin interés</span>
+              )}
             </span>
           </div>
         )}
 
         {/* Next installment breakdown */}
         {nextPayment && !isPaid && (
-          <div style={{ display: 'flex', gap: 12, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: debt.color + '14', borderRadius: 8, border: `1px solid ${debt.color}33` }}>
-            <span style={{ fontWeight: 600, color: debt.color }}>Próxima cuota {fmt(nextPayment.total, { compact: true })}</span>
+          <div style={{ display: 'flex', gap: 12, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: debt.color + '14', borderRadius: 8, border: `1px solid ${debt.color}33`, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600, color: debt.color }}>
+              Próxima cuota {fmt(nextPayment.total, { compact: true })}
+              {debt.payment_day_2 && <> × 2/mes</>}
+            </span>
             <span style={{ color: 'var(--text-mute)' }}>Capital: <span className="mono">{fmt(nextPayment.capital, { compact: true })}</span></span>
-            <span style={{ color: 'var(--text-mute)' }}>Interés: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment.interest, { compact: true })}</span></span>
-            {debt.annual_rate && <span style={{ color: 'var(--text-mute)' }}>{debt.annual_rate}% EA</span>}
+            {nextPayment.interest > 0 ? (
+              <span style={{ color: 'var(--text-mute)' }}>Interés: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment.interest, { compact: true })}</span></span>
+            ) : (
+              <span style={{ color: 'var(--green)' }}>Sin interés</span>
+            )}
+            {debt.annual_rate > 0 && <span style={{ color: 'var(--text-mute)' }}>{debt.annual_rate}% EA</span>}
           </div>
         )}
 
@@ -559,6 +581,7 @@ function DebtForm({ initial, users, onSave, onCancel }) {
     installment_amount: initial?.installment_amount  ? String(initial.installment_amount)  : '',
     annual_rate:        initial?.annual_rate         ? String(initial.annual_rate)         : '',
     payment_day:        initial?.payment_day         ? String(initial.payment_day)         : '',
+    payment_day_2:      initial?.payment_day_2       ? String(initial.payment_day_2)       : '',
   }));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -597,7 +620,8 @@ function DebtForm({ initial, users, onSave, onCancel }) {
       auto_pay:                 form.auto_pay,
       installment_amount:       C || null,
       annual_rate:              r || null,
-      payment_day:              Number(form.payment_day) || null,
+      payment_day:              Number(form.payment_day)   || null,
+      payment_day_2:            Number(form.payment_day_2) || null,
       historical_capital_paid,
       historical_interest_paid,
     });
@@ -701,23 +725,34 @@ function DebtForm({ initial, users, onSave, onCancel }) {
         </div>
 
         {form.auto_pay && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <div className="field">
-              <label className="field-label">Cuota mensual (COP)</label>
-              <input type="number" className="input mono" value={form.installment_amount}
-                onChange={e => set('installment_amount', e.target.value)} placeholder="0" min="1" required={form.auto_pay} />
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div className="field">
+                <label className="field-label">Cuota por pago (COP)</label>
+                <input type="number" className="input mono" value={form.installment_amount}
+                  onChange={e => set('installment_amount', e.target.value)} placeholder="0" min="1" required={form.auto_pay} />
+              </div>
+              <div className="field">
+                <label className="field-label">1er día de pago</label>
+                <input type="number" className="input mono" value={form.payment_day}
+                  onChange={e => set('payment_day', e.target.value)} placeholder="Ej: 1" min="1" max="31" />
+              </div>
+              <div className="field">
+                <label className="field-label">Tasa EA % <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(0 = sin interés)</span></label>
+                <input type="number" className="input mono" value={form.annual_rate}
+                  onChange={e => set('annual_rate', e.target.value)} placeholder="0" step="0.01" min="0" />
+              </div>
             </div>
-            <div className="field">
-              <label className="field-label">Día de descuento</label>
-              <input type="number" className="input mono" value={form.payment_day}
-                onChange={e => set('payment_day', e.target.value)} placeholder="Ej: 5" min="1" max="31" />
+            <div className="field" style={{ marginTop: 4 }}>
+              <label className="field-label">
+                2do día de pago{' '}
+                <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional — para pagos quincenales)</span>
+              </label>
+              <input type="number" className="input mono" value={form.payment_day_2}
+                onChange={e => set('payment_day_2', e.target.value)} placeholder="Ej: 15 (dejar vacío si es solo un pago/mes)" min="1" max="31"
+                style={{ maxWidth: 220 }} />
             </div>
-            <div className="field">
-              <label className="field-label">Tasa EA % <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(anual)</span></label>
-              <input type="number" className="input mono" value={form.annual_rate}
-                onChange={e => set('annual_rate', e.target.value)} placeholder="Ej: 18.5" step="0.01" min="0" />
-            </div>
-          </div>
+          </>
         )}
         {/* Always show rate when auto_pay is off — needed for historical interest calc */}
         {!form.auto_pay && (

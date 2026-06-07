@@ -285,6 +285,7 @@ class DebtOut(BaseModel):
     installment_amount: Optional[int] = None
     annual_rate: Optional[float] = None   # annual effective rate (EA %)
     payment_day: Optional[int] = None
+    payment_day_2: Optional[int] = None   # second payment day (bi-weekly / quincenal)
     auto_pay: bool = False
     # Historical data (payments made before tracking started)
     historical_capital_paid: int = 0
@@ -306,6 +307,7 @@ class DebtCreate(BaseModel):
     installment_amount: Optional[int] = None
     annual_rate: Optional[float] = None
     payment_day: Optional[int] = None
+    payment_day_2: Optional[int] = None
     auto_pay: bool = False
     # Historical payments before tracking
     historical_capital_paid: int = 0
@@ -322,6 +324,7 @@ class DebtUpdate(BaseModel):
     installment_amount: Optional[int] = None
     annual_rate: Optional[float] = None
     payment_day: Optional[int] = None
+    payment_day_2: Optional[int] = None
     auto_pay: Optional[bool] = None
     historical_capital_paid: Optional[int] = None
     historical_interest_paid: Optional[int] = None

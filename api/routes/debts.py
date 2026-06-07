@@ -33,18 +33,19 @@ async def list_debts(user_id: Optional[str] = Query(None)):
 async def create_debt(body: DebtCreate):
     try:
         debt = q.create_debt(
-            name                    = body.name,
-            total_amount            = body.total_amount,
-            user_id                 = body.user_id,
-            description             = body.description,
-            color                   = body.color,
-            due_date                = body.due_date,
-            installment_amount      = body.installment_amount,
-            annual_rate             = body.annual_rate,
-            payment_day             = body.payment_day,
-            auto_pay                = body.auto_pay,
-            historical_capital_paid = body.historical_capital_paid,
-            historical_interest_paid= body.historical_interest_paid,
+            name                     = body.name,
+            total_amount             = body.total_amount,
+            user_id                  = body.user_id,
+            description              = body.description,
+            color                    = body.color,
+            due_date                 = body.due_date,
+            installment_amount       = body.installment_amount,
+            annual_rate              = body.annual_rate,
+            payment_day              = body.payment_day,
+            payment_day_2            = body.payment_day_2,
+            auto_pay                 = body.auto_pay,
+            historical_capital_paid  = body.historical_capital_paid,
+            historical_interest_paid = body.historical_interest_paid,
         )
         return q.get_debt(debt["id"])
     except Exception as exc:
