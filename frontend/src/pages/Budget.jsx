@@ -351,11 +351,18 @@ function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment
               <span style={{ fontWeight: 600, fontSize: 16 }}>{debt.name}</span>
               {isPaid && <span className="pill up" style={{ fontSize: 11 }}>Pagada ✓</span>}
               {debt.auto_pay && !isPaid && (() => {
-                const days = [debt.payment_day, debt.payment_day_2].filter(Boolean);
+                // Build "Auto · día 10 ($1M) y día 25 ($2M)" label
+                const entries = [
+                  debt.payment_day ? { day: debt.payment_day, amt: debt.installment_amount } : null,
+                  debt.payment_day_2 ? { day: debt.payment_day_2, amt: debt.installment_amount_2 || debt.installment_amount } : null,
+                ].filter(Boolean);
+                const label = entries.map(e =>
+                  `día ${e.day}${e.amt ? ` (${fmt(e.amt, { compact: true })})` : ''}`
+                ).join(' y ');
                 return (
                   <span style={{ fontSize: 11, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 3 }}>
                     <RefreshCw size={10} />
-                    Auto · día{days.length > 1 ? 's' : ''} {days.join(' y ')}
+                    Auto · {label}
                   </span>
                 );
               })()}
@@ -418,22 +425,42 @@ function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment
           </div>
         )}
 
-        {/* Next installment breakdown */}
-        {nextPayment && !isPaid && (
-          <div style={{ display: 'flex', gap: 12, fontSize: 12, marginBottom: 10, padding: '8px 12px', background: debt.color + '14', borderRadius: 8, border: `1px solid ${debt.color}33`, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, color: debt.color }}>
-              Próxima cuota {fmt(nextPayment.total, { compact: true })}
-              {debt.payment_day_2 && <> × 2/mes</>}
-            </span>
-            <span style={{ color: 'var(--text-mute)' }}>Capital: <span className="mono">{fmt(nextPayment.capital, { compact: true })}</span></span>
-            {nextPayment.interest > 0 ? (
-              <span style={{ color: 'var(--text-mute)' }}>Interés: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment.interest, { compact: true })}</span></span>
-            ) : (
-              <span style={{ color: 'var(--green)' }}>Sin interés</span>
+        {/* Next installment breakdown — shows each payment day separately when amounts differ */}
+        {nextPayment && !isPaid && (() => {
+          const hasTwoPayments = debt.payment_day_2;
+          const amt2 = debt.installment_amount_2 || debt.installment_amount;
+          const nextPayment2 = hasTwoPayments ? nextInstallmentBreakdown({ ...debt, installment_amount: amt2 }) : null;
+          const monthlyTotal = nextPayment.total + (nextPayment2?.total ?? 0);
+
+          return (
+          <div style={{ fontSize: 12, marginBottom: 10, padding: '10px 12px', background: debt.color + '14', borderRadius: 8, border: `1px solid ${debt.color}33` }}>
+            <div style={{ fontWeight: 600, color: debt.color, marginBottom: 6 }}>
+              Pagos del mes · total {fmt(monthlyTotal, { compact: true })}
+            </div>
+            {/* Payment 1 */}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: hasTwoPayments ? 4 : 0 }}>
+              {hasTwoPayments && <span style={{ color: 'var(--text-dim)', minWidth: 48 }}>Día {debt.payment_day}:</span>}
+              <span style={{ color: 'var(--text-mute)' }}>{fmt(nextPayment.total, { compact: true })}</span>
+              <span style={{ color: 'var(--text-mute)' }}>K: <span className="mono">{fmt(nextPayment.capital, { compact: true })}</span></span>
+              {nextPayment.interest > 0
+                ? <span style={{ color: 'var(--text-mute)' }}>I: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment.interest, { compact: true })}</span></span>
+                : <span style={{ color: 'var(--green)' }}>Sin interés</span>}
+            </div>
+            {/* Payment 2 (only when configured) */}
+            {hasTwoPayments && nextPayment2 && (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ color: 'var(--text-dim)', minWidth: 48 }}>Día {debt.payment_day_2}:</span>
+                <span style={{ color: 'var(--text-mute)' }}>{fmt(nextPayment2.total, { compact: true })}</span>
+                <span style={{ color: 'var(--text-mute)' }}>K: <span className="mono">{fmt(nextPayment2.capital, { compact: true })}</span></span>
+                {nextPayment2.interest > 0
+                  ? <span style={{ color: 'var(--text-mute)' }}>I: <span className="mono" style={{ color: 'var(--amber)' }}>{fmt(nextPayment2.interest, { compact: true })}</span></span>
+                  : <span style={{ color: 'var(--green)' }}>Sin interés</span>}
+              </div>
             )}
             {debt.annual_rate > 0 && <span style={{ color: 'var(--text-mute)' }}>{debt.annual_rate}% EA</span>}
           </div>
-        )}
+          );
+        })()}
 
         <div style={{ display: 'flex', gap: 8 }}>
           {!isPaid && (
@@ -577,11 +604,12 @@ function DebtForm({ initial, users, onSave, onCancel }) {
     description:        initial?.description         ?? '',
     color:              initial?.color               ?? DEBT_COLORS[0],
     due_date:           initial?.due_date            ?? '',
-    auto_pay:           initial?.auto_pay            ?? false,
-    installment_amount: initial?.installment_amount  ? String(initial.installment_amount)  : '',
-    annual_rate:        initial?.annual_rate         ? String(initial.annual_rate)         : '',
-    payment_day:        initial?.payment_day         ? String(initial.payment_day)         : '',
-    payment_day_2:      initial?.payment_day_2       ? String(initial.payment_day_2)       : '',
+    auto_pay:             initial?.auto_pay              ?? false,
+    installment_amount:   initial?.installment_amount    ? String(initial.installment_amount)    : '',
+    installment_amount_2: initial?.installment_amount_2  ? String(initial.installment_amount_2)  : '',
+    annual_rate:          initial?.annual_rate           ? String(initial.annual_rate)           : '',
+    payment_day:          initial?.payment_day           ? String(initial.payment_day)           : '',
+    payment_day_2:        initial?.payment_day_2         ? String(initial.payment_day_2)         : '',
   }));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -619,6 +647,7 @@ function DebtForm({ initial, users, onSave, onCancel }) {
       due_date:                 form.due_date || null,
       auto_pay:                 form.auto_pay,
       installment_amount:       C || null,
+      installment_amount_2:     Number(form.installment_amount_2) || null,
       annual_rate:              r || null,
       payment_day:              Number(form.payment_day)   || null,
       payment_day_2:            Number(form.payment_day_2) || null,
@@ -743,14 +772,29 @@ function DebtForm({ initial, users, onSave, onCancel }) {
                   onChange={e => set('annual_rate', e.target.value)} placeholder="0" step="0.01" min="0" />
               </div>
             </div>
-            <div className="field" style={{ marginTop: 4 }}>
-              <label className="field-label">
-                2do día de pago{' '}
+            {/* Second payment — shown when user enters a second day */}
+            <div style={{ marginTop: 8, padding: '12px 14px', background: 'var(--bg-2)', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 10, color: 'var(--text-dim)' }}>
+                2do pago del mes{' '}
                 <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional — para pagos quincenales)</span>
-              </label>
-              <input type="number" className="input mono" value={form.payment_day_2}
-                onChange={e => set('payment_day_2', e.target.value)} placeholder="Ej: 15 (dejar vacío si es solo un pago/mes)" min="1" max="31"
-                style={{ maxWidth: 220 }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="field-label">Día del 2do pago</label>
+                  <input type="number" className="input mono" value={form.payment_day_2}
+                    onChange={e => set('payment_day_2', e.target.value)}
+                    placeholder="Ej: 25" min="1" max="31" />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="field-label">
+                    Monto del 2do pago{' '}
+                    <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(vacío = igual al 1ro)</span>
+                  </label>
+                  <input type="number" className="input mono" value={form.installment_amount_2}
+                    onChange={e => set('installment_amount_2', e.target.value)}
+                    placeholder={form.installment_amount || 'Mismo monto'} min="1" />
+                </div>
+              </div>
             </div>
           </>
         )}

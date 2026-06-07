@@ -411,13 +411,14 @@ def create_debt(
     description:             Optional[str]   = None,
     color:                   str             = "#dc2626",
     due_date:                Optional[str]   = None,
-    installment_amount:      Optional[int]   = None,
-    annual_rate:             Optional[float] = None,
-    payment_day:             Optional[int]   = None,
-    payment_day_2:           Optional[int]   = None,
-    auto_pay:                bool            = False,
-    historical_capital_paid: int             = 0,
-    historical_interest_paid:int             = 0,
+    installment_amount:       Optional[int]   = None,
+    installment_amount_2:     Optional[int]   = None,
+    annual_rate:              Optional[float] = None,
+    payment_day:              Optional[int]   = None,
+    payment_day_2:            Optional[int]   = None,
+    auto_pay:                 bool            = False,
+    historical_capital_paid:  int             = 0,
+    historical_interest_paid: int             = 0,
 ) -> dict:
     sb  = _sb()
     res = sb.table("debts").insert({
@@ -428,6 +429,7 @@ def create_debt(
         "color":                    color,
         "due_date":                 due_date,
         "installment_amount":       installment_amount,
+        "installment_amount_2":     installment_amount_2,
         "annual_rate":              annual_rate,
         "payment_day":              payment_day,
         "payment_day_2":            payment_day_2,
@@ -630,14 +632,31 @@ def process_pending_debt_installments(year: int, month: int) -> int:
         if debt["pending_amount"] <= 0:
             continue
 
-        installment = debt.get("installment_amount") or 0
         annual_rate = debt.get("annual_rate")  # None or 0 → interest-free
 
-        # Collect all configured payment days, clamped to actual month length
-        days = [d for d in [debt.get("payment_day") or 1, debt.get("payment_day_2")] if d]
-        days = sorted(set(min(d, max_day) for d in days))
+        # Build list of (day, installment_amount) pairs.
+        # payment_day_2 uses installment_amount_2 when set, otherwise falls back
+        # to the same installment_amount as the first payment.
+        installment_1 = debt.get("installment_amount") or 0
+        installment_2 = debt.get("installment_amount_2") or installment_1
+        day_1 = debt.get("payment_day") or 1
+        day_2 = debt.get("payment_day_2")
 
-        for day in days:
+        day_installment_pairs = [(day_1, installment_1)]
+        if day_2:
+            day_installment_pairs.append((day_2, installment_2))
+
+        # Clamp days to actual month length and deduplicate
+        seen = set()
+        deduped = []
+        for (d, amt) in day_installment_pairs:
+            d_clamped = min(d, max_day)
+            if d_clamped not in seen:
+                seen.add(d_clamped)
+                deduped.append((d_clamped, amt))
+        day_installment_pairs = sorted(deduped, key=lambda x: x[0])
+
+        for day, installment in day_installment_pairs:
             pay_date = _date(year, month, day)
             # Don't process payments that haven't arrived yet (current month only)
             if payment_month == current_month and pay_date > today:

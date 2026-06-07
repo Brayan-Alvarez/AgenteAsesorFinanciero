@@ -283,6 +283,7 @@ class DebtOut(BaseModel):
     due_date: Optional[str]
     # Auto-pay configuration
     installment_amount: Optional[int] = None
+    installment_amount_2: Optional[int] = None  # amount for the second payment day
     annual_rate: Optional[float] = None   # annual effective rate (EA %)
     payment_day: Optional[int] = None
     payment_day_2: Optional[int] = None   # second payment day (bi-weekly / quincenal)
@@ -305,6 +306,7 @@ class DebtCreate(BaseModel):
     due_date: Optional[str] = None
     # Auto-pay
     installment_amount: Optional[int] = None
+    installment_amount_2: Optional[int] = None
     annual_rate: Optional[float] = None
     payment_day: Optional[int] = None
     payment_day_2: Optional[int] = None
@@ -322,6 +324,7 @@ class DebtUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[str] = None
     installment_amount: Optional[int] = None
+    installment_amount_2: Optional[int] = None
     annual_rate: Optional[float] = None
     payment_day: Optional[int] = None
     payment_day_2: Optional[int] = None

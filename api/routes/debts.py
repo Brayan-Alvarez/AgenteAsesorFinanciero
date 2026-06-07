@@ -40,6 +40,7 @@ async def create_debt(body: DebtCreate):
             color                    = body.color,
             due_date                 = body.due_date,
             installment_amount       = body.installment_amount,
+            installment_amount_2     = body.installment_amount_2,
             annual_rate              = body.annual_rate,
             payment_day              = body.payment_day,
             payment_day_2            = body.payment_day_2,
