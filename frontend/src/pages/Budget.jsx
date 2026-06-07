@@ -298,6 +298,28 @@ function MigrationForm({ source, activeCategories, onMigrate, onCancel, saving, 
 function monthlyRate(annualRatePct) {
   return (1 + annualRatePct / 100) ** (1 / 12) - 1;
 }
+
+/**
+ * Given the original principal (P), current remaining balance (B),
+ * monthly installment (C) and annual effective rate (r %),
+ * derives the number of installments already paid (n) via the French
+ * amortization formula and returns total historical interest paid.
+ *
+ *   B = (P − C/m)·(1+m)^n + C/m  →  n = log((B − C/m)/(P − C/m)) / log(1+m)
+ *   interest_paid = n·C − (P − B)
+ */
+function calcHistoricalInterest(P, B, C, r) {
+  if (!r || !C || !P || P <= 0 || B >= P) return 0;
+  const m = (1 + r / 100) ** (1 / 12) - 1;
+  if (m <= 0) return 0;
+  const factor = C / m;
+  if (Math.abs(P - factor) < 1) return 0;
+  const x = (B - factor) / (P - factor);
+  if (x <= 0 || !isFinite(x)) return 0;
+  const n = Math.log(x) / Math.log(1 + m);
+  if (n <= 0 || !isFinite(n)) return 0;
+  return Math.max(Math.round(n * C) - Math.round(P - B), 0);
+}
 function nextInstallmentBreakdown(debt) {
   if (!debt.installment_amount || !debt.annual_rate) return null;
   const rate     = monthlyRate(debt.annual_rate);
@@ -307,7 +329,7 @@ function nextInstallmentBreakdown(debt) {
 }
 
 // ── Debt card ─────────────────────────────────────────────────────────────────
-function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
+function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment }) {
   const [expanded, setExpanded] = useState(false);
   const pct        = debt.total_amount > 0 ? (debt.total_capital_paid / debt.total_amount) * 100 : 0;
   const isPaid     = debt.status === 'paid' || debt.pending_amount === 0;
@@ -401,6 +423,9 @@ function DebtCard({ debt, users, onAddPayment, onDelete, onDeletePayment }) {
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {(debt.debt_payments?.length ?? 0)} abonos
           </button>
+          <button className="btn" style={{ fontSize: 13 }} onClick={() => onEdit(debt)}>
+            <Edit2 size={14} />
+          </button>
           <button className="btn" style={{ color: 'var(--red)', marginLeft: 'auto', fontSize: 13 }} onClick={() => onDelete(debt.id)}>
             <Trash2 size={14} />
           </button>
@@ -455,13 +480,24 @@ function PaymentForm({ debt, users, onSave, onCancel }) {
   const submit = (e) => {
     e.preventDefault();
     if (!form.amount) return;
-    onSave(debt.id, { ...form, amount: Number(form.amount) });
+    const amount = Number(form.amount);
+    // Extra manual payments always go 100% to capital — no interest split.
+    onSave(debt.id, { ...form, amount, capital_amount: amount, interest_amount: null });
   };
 
   return (
     <form onSubmit={submit}>
       <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-2)', borderRadius: 8, fontSize: 13 }}>
         Deuda: <strong>{debt.name}</strong> · Pendiente: <strong className="mono">{fmt(debt.pending_amount, { compact: true })}</strong>
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+        padding: '7px 12px', borderRadius: 8,
+        background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)',
+        fontSize: 12, color: 'var(--green)',
+      }}>
+        <Check size={13} style={{ flexShrink: 0 }} />
+        Este abono va directamente a capital — reduce el saldo de la deuda sin intereses.
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -502,34 +538,68 @@ function PaymentForm({ debt, users, onSave, onCancel }) {
   );
 }
 
-// ── New debt form ─────────────────────────────────────────────────────────────
-function DebtForm({ users, onSave, onCancel }) {
-  const [form, setForm] = useState({
-    name: '', total_amount: '', user_id: users[0]?.id ?? '', description: '',
-    color: DEBT_COLORS[0], due_date: '',
-    // Auto-pay
-    auto_pay: false, installment_amount: '', annual_rate: '', payment_day: '',
-    // Historical payments (before tracking)
-    historical_capital_paid: '', historical_interest_paid: '',
-  });
+// ── Shared debt form (create and edit) ───────────────────────────────────────
+// initial = existing DebtOut object when editing, undefined when creating.
+// Historical capital/interest are computed automatically from current_balance
+// using French amortization math — the user never enters them manually.
+function DebtForm({ initial, users, onSave, onCancel }) {
+  const isEdit = !!initial;
+
+  const [form, setForm] = useState(() => ({
+    name:               initial?.name               ?? '',
+    total_amount:       initial?.total_amount        ? String(initial.total_amount)       : '',
+    // "current_balance": the real-world remaining balance right now.
+    // For create: what the user currently owes. For edit: pre-fill from pending_amount.
+    current_balance:    initial?.pending_amount      ? String(initial.pending_amount)      : '',
+    user_id:            initial?.user_id             ?? (users[0]?.id ?? ''),
+    description:        initial?.description         ?? '',
+    color:              initial?.color               ?? DEBT_COLORS[0],
+    due_date:           initial?.due_date            ?? '',
+    auto_pay:           initial?.auto_pay            ?? false,
+    installment_amount: initial?.installment_amount  ? String(initial.installment_amount)  : '',
+    annual_rate:        initial?.annual_rate         ? String(initial.annual_rate)         : '',
+    payment_day:        initial?.payment_day         ? String(initial.payment_day)         : '',
+  }));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Live preview of calculated historical values
+  const P = Number(form.total_amount)       || 0;
+  const B = Number(form.current_balance)    || 0;
+  const C = Number(form.installment_amount) || 0;
+  const r = Number(form.annual_rate)        || 0;
+  const previewCapital  = P > 0 && B >= 0 && B < P ? Math.round(P - B) : 0;
+  const previewInterest = calcHistoricalInterest(P, B, C, r);
 
   const submit = (e) => {
     e.preventDefault();
-    if (!form.name || !form.total_amount) return;
+    if (!form.name || !P) return;
+
+    // For edit mode, tracked payments already reduce the balance.
+    // Adjust historical so the computed pending_amount matches what the user entered.
+    let historical_capital_paid, historical_interest_paid;
+    if (isEdit) {
+      const trackedCapital  = initial.total_capital_paid  - initial.historical_capital_paid;
+      const trackedInterest = initial.total_interest_paid - initial.historical_interest_paid;
+      historical_capital_paid  = Math.max(Math.round(P - B) - trackedCapital,  0);
+      historical_interest_paid = Math.max(previewInterest  - trackedInterest, 0);
+    } else {
+      historical_capital_paid  = previewCapital;
+      historical_interest_paid = previewInterest;
+    }
+
     onSave({
-      name:                     form.name,
-      total_amount:             Number(form.total_amount),
-      user_id:                  form.user_id || null,
-      description:              form.description || null,
+      name:                     form.name.trim(),
+      total_amount:             P,
+      user_id:                  form.user_id  || null,
+      description:              form.description.trim() || null,
       color:                    form.color,
       due_date:                 form.due_date || null,
       auto_pay:                 form.auto_pay,
-      installment_amount:       form.installment_amount ? Number(form.installment_amount) : null,
-      annual_rate:              form.annual_rate       ? Number(form.annual_rate)       : null,
-      payment_day:              form.payment_day       ? Number(form.payment_day)       : null,
-      historical_capital_paid:  form.historical_capital_paid  ? Number(form.historical_capital_paid)  : 0,
-      historical_interest_paid: form.historical_interest_paid ? Number(form.historical_interest_paid) : 0,
+      installment_amount:       C || null,
+      annual_rate:              r || null,
+      payment_day:              Number(form.payment_day) || null,
+      historical_capital_paid,
+      historical_interest_paid,
     });
   };
 
@@ -543,26 +613,60 @@ function DebtForm({ users, onSave, onCancel }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="field">
-          <label className="field-label">Monto total del crédito (COP)</label>
+          <label className="field-label">Saldo original del crédito (COP)</label>
           <input type="number" className="input mono" value={form.total_amount}
             onChange={e => set('total_amount', e.target.value)} placeholder="0" min="1" required />
         </div>
         <div className="field">
-          <label className="field-label">Fecha vencimiento <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
-          <input type="date" className="input" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
+          <label className="field-label">Saldo actual (lo que debes hoy)</label>
+          <input type="number" className="input mono" value={form.current_balance}
+            onChange={e => set('current_balance', e.target.value)} placeholder="0" min="0" required />
         </div>
       </div>
 
-      <div className="field">
-        <label className="field-label">Propietario</label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {users.map(u => (
-            <button key={u.id} type="button" className="btn"
-              style={{ flex: 1, justifyContent: 'center', borderColor: form.user_id === u.id ? u.color : 'var(--border)', background: form.user_id === u.id ? 'var(--surface-2)' : 'var(--bg-2)' }}
-              onClick={() => set('user_id', u.id)}>
-              <Avatar user={u} /> {u.name}
-            </button>
-          ))}
+      {/* Live preview of auto-calculated historical values */}
+      {P > 0 && B >= 0 && B < P && (
+        <div style={{
+          display: 'flex', gap: 16, fontSize: 12, padding: '8px 12px',
+          background: 'var(--bg-2)', borderRadius: 8, marginBottom: 12,
+        }}>
+          <span style={{ color: 'var(--text-mute)' }}>
+            Capital pagado: <strong className="mono" style={{ color: 'var(--text-dim)' }}>
+              ${previewCapital.toLocaleString('es-CO')}
+            </strong>
+          </span>
+          {previewInterest > 0 && (
+            <span style={{ color: 'var(--text-mute)' }}>
+              Intereses pagados: <strong className="mono" style={{ color: 'var(--amber)' }}>
+                ${previewInterest.toLocaleString('es-CO')}
+              </strong>
+              <span style={{ marginLeft: 4 }}>(calculado con tasa EA)</span>
+            </span>
+          )}
+          {previewInterest === 0 && r === 0 && (
+            <span style={{ color: 'var(--text-mute)', fontStyle: 'italic' }}>
+              Ingresa la tasa EA para calcular intereses históricos
+            </span>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Propietario</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {users.map(u => (
+              <button key={u.id} type="button" className="btn"
+                style={{ flex: 1, justifyContent: 'center', borderColor: form.user_id === u.id ? u.color : 'var(--border)', background: form.user_id === u.id ? 'var(--surface-2)' : 'var(--bg-2)' }}
+                onClick={() => set('user_id', u.id)}>
+                <Avatar user={u} /> {u.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="field">
+          <label className="field-label">Fecha vencimiento <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
+          <input type="date" className="input" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
         </div>
       </div>
 
@@ -615,36 +719,26 @@ function DebtForm({ users, onSave, onCancel }) {
             </div>
           </div>
         )}
-        {form.auto_pay && form.annual_rate && (
-          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: -4, marginBottom: 8 }}>
-            Tasa mensual efectiva ≈ {(((1 + Number(form.annual_rate)/100)**(1/12) - 1) * 100).toFixed(3)}%
+        {/* Always show rate when auto_pay is off — needed for historical interest calc */}
+        {!form.auto_pay && (
+          <div className="field" style={{ marginTop: 8 }}>
+            <label className="field-label">Tasa EA % <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(para cálculo de intereses históricos)</span></label>
+            <input type="number" className="input mono" value={form.annual_rate}
+              onChange={e => set('annual_rate', e.target.value)} placeholder="Ej: 18.5" step="0.01" min="0" />
+          </div>
+        )}
+        {r > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 4 }}>
+            Tasa mensual efectiva ≈ {((r > 0 ? (1 + r/100)**(1/12) - 1 : 0) * 100).toFixed(3)}%
           </div>
         )}
       </div>
 
-      {/* ── Historical payments ───────────────────────────────────────────── */}
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
-        <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Pagos históricos (antes de registrar)</div>
-        <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 12 }}>
-          Si ya habías hecho abonos antes de registrar esta deuda, ingrésalos aquí para que el saldo sea correcto. No se crea ninguna transacción.
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div className="field">
-            <label className="field-label">Capital ya pagado (COP)</label>
-            <input type="number" className="input mono" value={form.historical_capital_paid}
-              onChange={e => set('historical_capital_paid', e.target.value)} placeholder="0" min="0" />
-          </div>
-          <div className="field">
-            <label className="field-label">Intereses ya pagados (COP)</label>
-            <input type="number" className="input mono" value={form.historical_interest_paid}
-              onChange={e => set('historical_interest_paid', e.target.value)} placeholder="0" min="0" />
-          </div>
-        </div>
-      </div>
-
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
         <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
-        <button type="submit" className="btn primary"><Plus size={14} /> Crear deuda</button>
+        <button type="submit" className="btn primary">
+          {isEdit ? <><Check size={14} /> Guardar cambios</> : <><Plus size={14} /> Crear deuda</>}
+        </button>
       </div>
     </form>
   );
@@ -1171,6 +1265,7 @@ export default function Budget() {
   // Modals
   const [paymentTarget,  setPaymentTarget]  = useState(null);
   const [showDebtForm,   setShowDebtForm]   = useState(false);
+  const [editingDebt,    setEditingDebt]    = useState(null);
   const [showCatForm,    setShowCatForm]    = useState(false);
   const [showSubForm,    setShowSubForm]    = useState(false); // subscription creation modal
   const [editingSub,     setEditingSub]     = useState(null);  // subscription being edited
@@ -1474,6 +1569,7 @@ export default function Budget() {
 
   // ── Debt actions ─────────────────────────────────────────────────────────────
   const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await Promise.all([loadDebts(), reloadCategories()]); } catch (err) { console.error(err); } };
+  const handleEditDebt      = async (data)           => { try { await updateDebt(editingDebt.id, data); setEditingDebt(null); await loadDebts(); } catch (err) { console.error(err); } };
   const handleDeleteDebt    = async (id)             => { if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return; try { await deleteDebt(id); await loadDebts(); } catch (err) { console.error(err); } };
   const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
   const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };
@@ -2126,6 +2222,7 @@ export default function Budget() {
                   debt={debt}
                   users={users}
                   onAddPayment={setPaymentTarget}
+                  onEdit={setEditingDebt}
                   onDelete={handleDeleteDebt}
                   onDeletePayment={handleDeletePayment}
                 />
@@ -2204,6 +2301,12 @@ export default function Budget() {
 
       <Modal open={showDebtForm} onClose={() => setShowDebtForm(false)} title="Nueva deuda">
         <DebtForm users={users} onSave={handleCreateDebt} onCancel={() => setShowDebtForm(false)} />
+      </Modal>
+
+      <Modal open={!!editingDebt} onClose={() => setEditingDebt(null)} title={`Editar — ${editingDebt?.name ?? ''}`}>
+        {editingDebt && (
+          <DebtForm initial={editingDebt} users={users} onSave={handleEditDebt} onCancel={() => setEditingDebt(null)} />
+        )}
       </Modal>
 
       <Modal open={showCatForm} onClose={() => setShowCatForm(false)} title="Nueva categoría">
