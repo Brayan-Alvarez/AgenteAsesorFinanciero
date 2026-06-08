@@ -1816,6 +1816,25 @@ export default function Budget() {
   }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers, totalDebtBudgetAllUsers]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
+  // True when the user is viewing a month strictly before today's month.
+  const isPastMonth = year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth() + 1);
+
+  // Inactive (deleted) categories that still have a budgeted amount for the viewed past month.
+  // Only computed for past months — in the current month deleted categories should stay hidden.
+  const archivedCatsWithBudget = useMemo(() => {
+    if (!isPastMonth) return [];
+    return categories
+      .filter(c => c.is_active === false && budgetMap[c.id] !== undefined)
+      .map(cat => {
+        const budgetAmt = userFilter === 'all'
+          ? (budgetMap[cat.id]?.total ?? 0)
+          : (budgetMap[cat.id] ?? 0);
+        const spent = spentByCategory[cat.id] ?? 0;
+        return { cat, budgetAmt, spent };
+      })
+      .filter(({ budgetAmt }) => budgetAmt > 0);
+  }, [categories, budgetMap, userFilter, isPastMonth, spentByCategory]);
+
   // ── Budget save — optimistic update ─────────────────────────────────────────
   const handleBudgetSave = useCallback(async (categoryId, amount) => {
     if (userFilter === 'all') return;
@@ -2398,6 +2417,73 @@ export default function Budget() {
                 </div>
               );
             })}
+
+            {/* Archived categories: inactive cats with a budget entry in this past month */}
+            {!budgetLoading && archivedCatsWithBudget.length > 0 && (
+              <>
+                <div style={{
+                  padding: '7px 20px', background: 'var(--bg-2)',
+                  borderTop: '2px dashed var(--border)',
+                  fontSize: 11, color: 'var(--text-mute)',
+                  textTransform: 'uppercase', letterSpacing: '0.06em',
+                }}>
+                  Categorías archivadas
+                </div>
+                {archivedCatsWithBudget.map(({ cat, budgetAmt, spent }) => {
+                  const pct  = budgetAmt > 0 ? (spent / budgetAmt) * 100 : 0;
+                  const over = budgetAmt > 0 && spent > budgetAmt;
+                  return (
+                    <div key={cat.id} style={{
+                      display: 'grid',
+                      gridTemplateColumns: userFilter === 'all' ? '1fr 160px 150px 140px' : '1fr 120px 120px 140px',
+                      gap: 12, padding: '12px 20px', alignItems: 'center',
+                      borderBottom: '1px solid var(--border)', opacity: 0.7,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{
+                          width: 32, height: 32, borderRadius: 8,
+                          background: cat.color + '22', color: cat.color,
+                          display: 'grid', placeItems: 'center', fontSize: 15, flexShrink: 0,
+                        }}>
+                          {cat.icon}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--text-dim)', textDecoration: 'line-through' }}>
+                            {cat.name}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Archivada</div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span className="mono" style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                          {fmt(budgetAmt, { compact: true })}
+                        </span>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span className="mono" style={{ fontSize: 13, color: over ? 'var(--red)' : 'var(--text-dim)' }}>
+                          {spent > 0 ? fmt(spent, { compact: true }) : '—'}
+                        </span>
+                      </div>
+                      <div>
+                        {budgetAmt > 0 && (
+                          <>
+                            <div className="bar" style={{ marginBottom: 4 }}>
+                              <div className="bar-fill" style={{
+                                width: `${Math.min(pct, 100)}%`,
+                                background: over ? 'var(--red)' : 'var(--text-mute)',
+                              }} />
+                            </div>
+                            <span className="mono" style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+                              {pct.toFixed(0)}%
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
 
           {userFilter === 'all' && (
