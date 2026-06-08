@@ -1509,7 +1509,7 @@ function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, hist
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Budget() {
   const {
-    users, categories, transactions, subscriptions, userFilter, setUserFilter,
+    users, categories, transactions, subscriptions, debts: allDebts, userFilter, setUserFilter,
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
     addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
@@ -1734,18 +1734,69 @@ export default function Budget() {
     [subscriptions, subscriptionsCat],
   );
 
+  // ── Debt auto-budget: monthly installment amounts per category ─────────────
+  // Mirrors the subscription auto-budget pattern. Each active auto-pay debt
+  // contributes its monthly total (1 or 2 installments) to the budget of
+  // whatever category its subcategory lives under (usually "Finanzas y deudas").
+  // Individual view: only debts owned by the selected user.
+  // All-users view: all active debts.
+  const debtBudgetByCategory = useMemo(() => {
+    const map = {};
+    // Build subcategory_id → category_id lookup from loaded categories
+    const subToCat = {};
+    categories.forEach(cat => {
+      (cat.subcategories || []).forEach(sub => { subToCat[sub.id] = cat.id; });
+    });
+
+    (allDebts || []).forEach(debt => {
+      if (!debt.auto_pay || debt.status !== 'active' || !debt.installment_amount) return;
+      if (debt.pending_amount <= 0) return;
+      if (userFilter !== 'all' && debt.user_id && debt.user_id !== userFilter) return;
+
+      const monthly = debt.installment_amount +
+        (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
+
+      // Resolve category via subcategory lookup
+      const catId = debt.subcategory_id ? subToCat[debt.subcategory_id] : null;
+      if (catId) map[catId] = (map[catId] || 0) + monthly;
+    });
+    return map;
+  }, [allDebts, categories, userFilter]);
+
+  const totalDebtBudgetForView = useMemo(
+    () => Object.values(debtBudgetByCategory).reduce((s, v) => s + v, 0),
+    [debtBudgetByCategory],
+  );
+
+  const totalDebtBudgetAllUsers = useMemo(() => {
+    const subToCat = {};
+    categories.forEach(cat => {
+      (cat.subcategories || []).forEach(sub => { subToCat[sub.id] = cat.id; });
+    });
+    const map = {};
+    (allDebts || []).forEach(debt => {
+      if (!debt.auto_pay || debt.status !== 'active' || !debt.installment_amount) return;
+      if (debt.pending_amount <= 0) return;
+      const monthly = debt.installment_amount +
+        (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
+      const catId = debt.subcategory_id ? subToCat[debt.subcategory_id] : null;
+      if (catId) map[catId] = (map[catId] || 0) + monthly;
+    });
+    return Object.values(map).reduce((s, v) => s + v, 0);
+  }, [allDebts, categories]);
+
   const totalBudget = useMemo(() => {
     const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
-    return manual + (subscriptionsCat ? subsAmountForView : 0) + totalCustomSubsForView;
-  }, [budgetMap, userFilter, subscriptionsCat, subsAmountForView, totalCustomSubsForView]);
+    return manual + (subscriptionsCat ? subsAmountForView : 0) + totalCustomSubsForView + totalDebtBudgetForView;
+  }, [budgetMap, userFilter, subscriptionsCat, subsAmountForView, totalCustomSubsForView, totalDebtBudgetForView]);
 
   // All-users budget total — used in income tab regardless of who is selected.
   const totalBudgetAllUsers = useMemo(() => {
     const catTotals = {};
     allBudgetRows.forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
     const manual = Object.values(catTotals).reduce((s, v) => s + v, 0);
-    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0) + totalCustomSubsAllUsers;
-  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers]);
+    return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0) + totalCustomSubsAllUsers + totalDebtBudgetAllUsers;
+  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers, totalDebtBudgetAllUsers]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
   // ── Budget save — optimistic update ─────────────────────────────────────────
@@ -2034,10 +2085,12 @@ export default function Budget() {
               </div>
             ) : activeCategories.map(cat => {
               const isSubsCat = subscriptionsCat && cat.id === subscriptionsCat.id;
-              const manualBudget  = isSubsCat ? 0 : getBudgetAmount(cat.id);
-              // Auto-budget from subscriptions assigned to this specific category.
+              const manualBudget    = isSubsCat ? 0 : getBudgetAmount(cat.id);
+              // Auto-budget from custom-category subscriptions for this category.
               const customSubForCat = isSubsCat ? 0 : (customSubAmountByCategory[cat.id] ?? 0);
-              const budgeted = isSubsCat ? subsAmountForView : manualBudget + customSubForCat;
+              // Auto-budget from active auto-pay debt installments for this category.
+              const debtForCat      = isSubsCat ? 0 : (debtBudgetByCategory[cat.id] ?? 0);
+              const budgeted = isSubsCat ? subsAmountForView : manualBudget + customSubForCat + debtForCat;
               // For the all-users breakdown column, use subscriptionsByUser for the subs category
               // (no manual budget rows exist for it, so byUser would otherwise be empty).
               const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
@@ -2092,6 +2145,23 @@ export default function Budget() {
                               <RefreshCw size={10} style={{ color: 'var(--primary)', flexShrink: 0 }} />
                               <span style={{ fontSize: 11, color: 'var(--primary)' }}>
                                 {catSubs.length} recurrente{catSubs.length !== 1 ? 's' : ''} · automático
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                        {/* Auto-budget badge — active auto-pay debts */}
+                        {!isSubsCat && debtForCat > 0 && (() => {
+                          const catDebts = (allDebts || []).filter(d =>
+                            d.auto_pay && d.status === 'active' && d.pending_amount > 0 &&
+                            d.subcategory_id &&
+                            categories.some(c => c.id === cat.id && (c.subcategories || []).some(s => s.id === d.subcategory_id)) &&
+                            (userFilter === 'all' || !d.user_id || d.user_id === userFilter)
+                          );
+                          return catDebts.length > 0 ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <span style={{ fontSize: 10, flexShrink: 0 }}>💳</span>
+                              <span style={{ fontSize: 11, color: 'var(--amber)' }}>
+                                {catDebts.length} deuda{catDebts.length !== 1 ? 's' : ''} · automático
                               </span>
                             </div>
                           ) : null;
@@ -2163,6 +2233,15 @@ export default function Budget() {
                               </span>
                             </div>
                           )}
+                          {/* Auto portion from debt installments (all-users view) */}
+                          {!isSubsCat && debtForCat > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3 }}>
+                              <span style={{ fontSize: 9 }}>💳</span>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
+                                +{fmt(debtForCat, { compact: true })} deudas
+                              </span>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <>
@@ -2178,6 +2257,15 @@ export default function Budget() {
                               <RefreshCw size={9} style={{ color: 'var(--primary)', flexShrink: 0 }} />
                               <span className="mono" style={{ fontSize: 11, color: 'var(--primary)' }}>
                                 +{fmt(customSubForCat, { compact: true })}
+                              </span>
+                            </div>
+                          )}
+                          {/* Auto portion from active debt installments */}
+                          {debtForCat > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3 }}>
+                              <span style={{ fontSize: 9 }}>💳</span>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
+                                +{fmt(debtForCat, { compact: true })}
                               </span>
                             </div>
                           )}
