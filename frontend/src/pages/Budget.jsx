@@ -333,6 +333,83 @@ function nextInstallmentBreakdown(debt) {
   return { capital, interest, total: capital + interest };
 }
 
+/**
+ * Forward projection: given the current pending balance and installments,
+ * calculates remaining months, future interest, total left to pay and
+ * estimated payoff date.
+ * For bi-weekly debts the monthly payment total = installment_1 + installment_2.
+ */
+function projectionStats(debt) {
+  const balance = debt.pending_amount;
+  if (!debt.installment_amount || balance <= 0) return null;
+
+  // Total monthly outflow (1 or 2 payments per month)
+  const monthlyPayment = debt.installment_amount +
+    (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
+
+  const rate = debt.annual_rate || 0;
+  let monthsRemaining, futureInterest;
+
+  if (rate > 0) {
+    const m     = monthlyRate(rate);
+    const ratio = m * balance / monthlyPayment;
+    if (ratio >= 1) return null; // installment too small — debt never paid off
+    monthsRemaining = Math.ceil(-Math.log(1 - ratio) / Math.log(1 + m));
+    futureInterest  = Math.max(Math.round(monthsRemaining * monthlyPayment - balance), 0);
+  } else {
+    monthsRemaining = Math.ceil(balance / monthlyPayment);
+    futureInterest  = 0;
+  }
+
+  // Estimated payoff calendar date
+  const payoff = new Date();
+  payoff.setDate(1); // normalize to 1st so month arithmetic works
+  payoff.setMonth(payoff.getMonth() + monthsRemaining);
+
+  const MONTHS_SHORT = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const payoffLabel  = `${MONTHS_SHORT[payoff.getMonth()]} ${payoff.getFullYear()}`;
+
+  return {
+    monthsRemaining,
+    futureInterest,
+    totalToPayoff: balance + futureInterest,
+    payoffLabel,
+    monthlyPayment,
+    hasRate: rate > 0,
+  };
+}
+
+/**
+ * Simulate the effect of a one-time extra capital payment.
+ * Returns the comparison between current projection and post-payment projection.
+ */
+function simulateExtraPayment(debt, extraAmount) {
+  if (!extraAmount || extraAmount <= 0 || !debt.installment_amount) return null;
+  const balance = debt.pending_amount;
+  if (extraAmount >= balance) {
+    const current = projectionStats(debt);
+    return {
+      paysOff:       true,
+      monthsSaved:   current?.monthsRemaining ?? 0,
+      interestSaved: current?.futureInterest  ?? 0,
+      currentMonths: current?.monthsRemaining ?? 0,
+      newMonths:     0,
+    };
+  }
+  const current   = projectionStats(debt);
+  const projected = projectionStats({ ...debt, pending_amount: balance - extraAmount });
+  if (!current || !projected) return null;
+  return {
+    paysOff:       false,
+    currentMonths: current.monthsRemaining,
+    newMonths:     projected.monthsRemaining,
+    monthsSaved:   current.monthsRemaining - projected.monthsRemaining,
+    interestSaved: current.futureInterest  - projected.futureInterest,
+    newPayoffLabel: projected.payoffLabel,
+    hasRate:        current.hasRate,
+  };
+}
+
 // ── Debt card ─────────────────────────────────────────────────────────────────
 function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment }) {
   const [expanded, setExpanded] = useState(false);
@@ -462,6 +539,52 @@ function DebtCard({ debt, users, onAddPayment, onEdit, onDelete, onDeletePayment
           );
         })()}
 
+        {/* ── Fase 1: Proyección hacia el futuro ──────────────────────────── */}
+        {!isPaid && (() => {
+          const proj = projectionStats(debt);
+          if (!proj) return null;
+          return (
+            <div style={{ marginBottom: 10, padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                Proyección · si mantienes los pagos actuales
+              </div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Meses restantes</div>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
+                    {proj.monthsRemaining}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Fecha estimada de pago</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+                    {proj.payoffLabel}
+                  </div>
+                </div>
+                {proj.hasRate && (
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Intereses futuros</div>
+                    <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: 'var(--amber)' }}>
+                      {fmt(proj.futureInterest, { compact: true })}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Total a pagar</div>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-dim)' }}>
+                    {fmt(proj.totalToPayoff, { compact: true })}
+                  </div>
+                </div>
+              </div>
+              {proj.hasRate && (
+                <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6 }} className="mono">
+                  Cuota mensual {fmt(proj.monthlyPayment, { compact: true })} · {debt.annual_rate}% EA
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ display: 'flex', gap: 8 }}>
           {!isPaid && (
             <button className="btn primary" style={{ fontSize: 13 }} onClick={() => onAddPayment(debt)}>
@@ -578,6 +701,70 @@ function PaymentForm({ debt, users, onSave, onCancel }) {
         <label className="field-label">Descripción <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(opcional)</span></label>
         <input className="input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="Ej: Cuota 3 de 12" />
       </div>
+
+      {/* ── Fase 2: Simulación en vivo ──────────────────────────────────── */}
+      {(() => {
+        const sim = simulateExtraPayment(debt, Number(form.amount));
+        if (!sim) return null;
+
+        if (sim.paysOff) {
+          return (
+            <div style={{
+              padding: '12px 14px', borderRadius: 8, marginBottom: 4,
+              background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.3)',
+            }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--green)', marginBottom: 4 }}>
+                🎉 ¡Con este abono pagas la deuda por completo!
+              </div>
+              {sim.monthsSaved > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-mute)' }}>
+                  Te ahorras <strong>{sim.monthsSaved} mes{sim.monthsSaved !== 1 ? 'es' : ''}</strong>
+                  {sim.interestSaved > 0 && <> y <strong className="mono" style={{ color: 'var(--amber)' }}>{fmt(sim.interestSaved, { compact: true })}</strong> en intereses</>}.
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div style={{
+            padding: '12px 14px', borderRadius: 8, marginBottom: 4,
+            background: 'var(--bg-2)', border: '1px solid var(--border)',
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+              Simulación · efecto de este abono
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Sin abono</div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-dim)' }}>
+                  {sim.currentMonths} meses
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Con este abono</div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--green)' }}>
+                  {sim.newMonths} meses{sim.newPayoffLabel ? ` · ${sim.newPayoffLabel}` : ''}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Meses que adelantas</div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: sim.monthsSaved > 0 ? 'var(--green)' : 'var(--text-mute)' }}>
+                  {sim.monthsSaved > 0 ? `−${sim.monthsSaved} mes${sim.monthsSaved !== 1 ? 'es' : ''}` : 'sin cambio'}
+                </div>
+              </div>
+              {sim.hasRate && (
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>Intereses que te ahorras</div>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: sim.interestSaved > 0 ? 'var(--amber)' : 'var(--text-mute)' }} className="mono">
+                    {sim.interestSaved > 0 ? fmt(sim.interestSaved, { compact: true }) : '$0'}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
         <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
