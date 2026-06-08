@@ -914,6 +914,9 @@ def upsert_income(
         "notes":      notes,
     }).execute()
 
+    # Auto-generate income transaction for the saved month (idempotent)
+    generate_income_transactions(year, month)
+
     return entry
 
 
@@ -924,3 +927,99 @@ def get_income_history(user_id: str) -> list[dict]:
         .order("changed_at", desc=True) \
         .execute()
     return res.data
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INCOME TRANSACTIONS — auto-generate monthly income entries in transactions
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_or_create_income_category() -> str:
+    """Returns the UUID of the 'Ingresos' category, creating it if absent."""
+    sb  = _sb()
+    res = sb.table("categories").select("id").eq("name", "Ingresos").execute()
+    if res.data:
+        return res.data[0]["id"]
+    new = sb.table("categories").insert({
+        "name":       "Ingresos",
+        "icon":       "💰",
+        "color":      "#22c55e",
+        "type":       "variable",
+        "sort_order": 0,
+        "is_active":  True,
+    }).execute()
+    return new.data[0]["id"]
+
+
+def generate_income_transactions(year: int, month: int) -> int:
+    """
+    For the given month, create one income transaction per user who has
+    declared income, if no income transaction already exists for that user
+    in that month.  Idempotent — safe to call on every app load.
+    Returns the number of new transactions created.
+    """
+    sb          = _sb()
+    income_rows = get_income(year, month)
+    if not income_rows:
+        return 0
+
+    cat_id  = _get_or_create_income_category()
+    lo      = f"{year}-{month:02d}-01"
+    hi      = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
+    created = 0
+
+    for row in income_rows:
+        user_id = row["user_id"]
+        amount  = row.get("amount", 0)
+        if amount <= 0:
+            continue
+
+        # Skip if ANY income transaction already exists for this user+month
+        existing = sb.table("transactions").select("id") \
+            .eq("user_id", user_id).eq("type", "income") \
+            .gte("date", lo).lt("date", hi) \
+            .execute()
+        if existing.data:
+            continue
+
+        user_name = (row.get("users") or {}).get("name", "")
+        desc      = f"Ingreso mensual{' – ' + user_name if user_name else ''}"
+
+        sb.table("transactions").insert({
+            "user_id":     user_id,
+            "date":        lo,           # 1st of the month
+            "category_id": cat_id,
+            "description": desc,
+            "amount":      amount,
+            "type":        "income",
+        }).execute()
+        created += 1
+
+    return created
+
+
+def seed_income_transactions_history() -> int:
+    """
+    Generate income transactions for every month that has any transaction
+    data, up to and including the current month.  Uses carry-forward income.
+    Safe to call multiple times (idempotent per user+month).
+    """
+    from datetime import date as _date
+
+    sb    = _sb()
+    today = _date.today()
+
+    # Collect every distinct year/month from the transactions table
+    txns   = sb.table("transactions").select("date").execute().data
+    months = set()
+    for t in txns:
+        d = _date.fromisoformat(t["date"])
+        if d <= today:
+            months.add((d.year, d.month))
+
+    # Always include the current month even if no transactions yet
+    months.add((today.year, today.month))
+
+    total = 0
+    for (y, m) in sorted(months):
+        total += generate_income_transactions(y, m)
+    return total

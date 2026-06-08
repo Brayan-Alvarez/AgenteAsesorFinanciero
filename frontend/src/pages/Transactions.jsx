@@ -223,6 +223,9 @@ export default function Transactions({ openTxnForm }) {
                     const u       = getUser(t.userId) ?? t.user;
                     const cat     = categories.find(c => c.id === t.categoryId)
                                  ?? { name: t.category, icon: '📦', color: '#94a3b8' };
+                    const sub     = t.subcategoryId
+                                 ? (cat.subcategories || []).find(s => s.id === t.subcategoryId)
+                                 : null;
                     const isSelected = selectedIds.has(t.id);
                     const isHovered  = hoveredId === t.id;
 
@@ -278,7 +281,16 @@ export default function Transactions({ openTxnForm }) {
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>{cat.name}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            {cat.name}
+                            {sub && (
+                              <>
+                                <span style={{ opacity: 0.4 }}>›</span>
+                                {sub.icon && <span>{sub.icon}</span>}
+                                <span>{sub.name}</span>
+                              </>
+                            )}
+                          </div>
                         </td>
 
                         <td>

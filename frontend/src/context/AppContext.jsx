@@ -19,6 +19,7 @@ import {
   getTransactionsDb, createTransactionDb, updateTransactionDb, deleteTransactionDb,
   getSubscriptions, processSubscriptions,
   getDebts, processDebtInstallments,
+  generateIncomeTransactions,
 } from '../api/client.js';
 
 const AppContext = createContext(null);
@@ -91,7 +92,8 @@ export function AppProvider({ children }) {
         });
       })
       .then(([usersData, catsData]) => {
-        // 3. Process pending subscriptions + debt installments (idempotent, safe every load).
+        // 3. Process pending subscriptions, debt installments and income transactions
+        //    (idempotent, safe every load).
         return Promise.all([
           processSubscriptions(year, currentMonth).catch(err => {
             console.warn('Subscription auto-processing failed:', err);
@@ -101,8 +103,13 @@ export function AppProvider({ children }) {
             console.warn('Debt installment auto-processing failed:', err);
             return { created: 0 };
           }),
-        ]).then(([subResult, debtResult]) => {
-          if ((subResult.created ?? 0) + (debtResult.created ?? 0) > 0) {
+          generateIncomeTransactions(year, currentMonth).catch(err => {
+            console.warn('Income transaction auto-generation failed:', err);
+            return { created: 0 };
+          }),
+        ]).then(([subResult, debtResult, incomeResult]) => {
+          const totalNew = (subResult.created ?? 0) + (debtResult.created ?? 0) + (incomeResult.created ?? 0);
+          if (totalNew > 0) {
             return getTransactionsDb({ year }).then(txns => {
               setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
             });

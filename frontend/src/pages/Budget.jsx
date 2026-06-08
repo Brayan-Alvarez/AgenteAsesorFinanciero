@@ -19,7 +19,7 @@ import {
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
   migrateCategory,
   createSubscription, updateSubscription, cancelSubscription,
-  getIncome, upsertIncome, getIncomeHistory,
+  getIncome, upsertIncome, getIncomeHistory, seedIncomeHistory,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -1539,6 +1539,7 @@ export default function Budget() {
   const [editingDebt,    setEditingDebt]    = useState(null);
   const [showCatForm,    setShowCatForm]    = useState(false);
   const [showSubForm,    setShowSubForm]    = useState(false); // subscription creation modal
+  const [seedingIncome,  setSeedingIncome]  = useState(false);
   const [editingSub,     setEditingSub]     = useState(null);  // subscription being edited
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
   const [subFormError,  setSubFormError]  = useState(null);
@@ -2096,7 +2097,10 @@ export default function Budget() {
               const byUser   = userFilter === 'all' ? (budgetMap[cat.id]?.byUser ?? {}) : null;
               const effectiveByUser = isSubsCat ? subscriptionsByUser : byUser;
               const spent    = spentByCategory[cat.id] ?? 0;
-              const pct      = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 0;
+              // pct: real percentage (may exceed 100 when over budget — shown in text)
+              // pctBar: clamped to 100 for the bar width
+              const pct      = budgeted > 0 ? (spent / budgeted) * 100 : 0;
+              const pctBar   = Math.min(pct, 100);
               const over     = budgeted > 0 && spent > budgeted;
               const activeSubs = (cat.subcategories || []).filter(s => s.is_active !== false);
 
@@ -2298,12 +2302,12 @@ export default function Budget() {
                         <>
                           <div className="bar" style={{ marginBottom: 4 }}>
                             <div className="bar-fill" style={{
-                              width: `${pct}%`,
+                              width: `${pctBar}%`,
                               background: over ? 'var(--red)' : pct > 85 ? 'var(--amber)' : `linear-gradient(90deg, ${cat.color}, ${cat.color}aa)`,
                             }} />
                           </div>
-                          <span style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)' }} className="mono">
-                            {pct.toFixed(0)}%
+                          <span style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)', fontWeight: over ? 600 : 400 }} className="mono">
+                            {pct.toFixed(0)}%{over && ' ↑ sobre presupuesto'}
                           </span>
                         </>
                       ) : (
@@ -2463,6 +2467,33 @@ export default function Budget() {
       {/* ── INCOME TAB ────────────────────────────────────────────────────────── */}
       {tab === 'income' && (
         <>
+          {/* One-time seed button — generates income transactions for all historical months */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+            <button
+              className="btn"
+              style={{ fontSize: 13 }}
+              disabled={seedingIncome}
+              onClick={async () => {
+                setSeedingIncome(true);
+                try {
+                  const { created } = await seedIncomeHistory();
+                  if (created > 0) {
+                    await reloadTransactions();
+                    alert(`✓ Se crearon ${created} transacciones de ingreso para el historial.`);
+                  } else {
+                    alert('El historial ya estaba al día — no se crearon transacciones nuevas.');
+                  }
+                } catch (err) {
+                  alert(`Error: ${err?.response?.data?.detail ?? err?.message ?? err}`);
+                } finally {
+                  setSeedingIncome(false);
+                }
+              }}
+            >
+              {seedingIncome ? 'Generando…' : '💰 Generar ingresos históricos'}
+            </button>
+          </div>
+
           {/* KPIs — always use all-users totals regardless of userFilter */}
           <div className="grid grid-3" style={{ marginBottom: 20 }}>
             <div className="card">

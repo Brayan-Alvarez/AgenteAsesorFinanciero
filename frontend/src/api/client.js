@@ -246,3 +246,13 @@ export async function getIncomeHistory(userId) {
   const response = await api.get('/api/income/history', { params: { user_id: userId } });
   return response.data;
 }
+
+export async function generateIncomeTransactions(year, month) {
+  const response = await api.post('/api/income/generate', null, { params: { year, month } });
+  return response.data;
+}
+
+export async function seedIncomeHistory() {
+  const response = await api.post('/api/income/seed-history');
+  return response.data;
+}
