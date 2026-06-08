@@ -421,22 +421,28 @@ def create_debt(
     historical_interest_paid: int             = 0,
 ) -> dict:
     sb  = _sb()
-    res = sb.table("debts").insert({
+    # Build the row dict with required fields always present.
+    # Optional nullable columns are only included when they have a value —
+    # this prevents PostgREST PGRST204 errors if a column migration hasn't
+    # been run yet in a given Supabase project.
+    row: dict = {
         "name":                     name,
         "total_amount":             total_amount,
-        "user_id":                  user_id,
-        "description":              description,
         "color":                    color,
-        "due_date":                 due_date,
-        "installment_amount":       installment_amount,
-        "installment_amount_2":     installment_amount_2,
-        "annual_rate":              annual_rate,
-        "payment_day":              payment_day,
-        "payment_day_2":            payment_day_2,
         "auto_pay":                 auto_pay,
         "historical_capital_paid":  historical_capital_paid,
         "historical_interest_paid": historical_interest_paid,
-    }).execute()
+    }
+    if user_id is not None:              row["user_id"]              = user_id
+    if description is not None:          row["description"]          = description
+    if due_date is not None:             row["due_date"]             = due_date
+    if installment_amount is not None:   row["installment_amount"]   = installment_amount
+    if installment_amount_2 is not None: row["installment_amount_2"] = installment_amount_2
+    if annual_rate is not None:          row["annual_rate"]          = annual_rate
+    if payment_day is not None:          row["payment_day"]          = payment_day
+    if payment_day_2 is not None:        row["payment_day_2"]        = payment_day_2
+
+    res  = sb.table("debts").insert(row).execute()
     debt = res.data[0]
 
     # Auto-create a subcategory under "Finanzas y deudas" so this debt appears
