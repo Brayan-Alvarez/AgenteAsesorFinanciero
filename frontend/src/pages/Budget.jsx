@@ -1754,6 +1754,15 @@ export default function Budget() {
       if (debt.pending_amount <= 0) return;
       if (userFilter !== 'all' && debt.user_id && debt.user_id !== userFilter) return;
 
+      // Only apply auto-budget from the month the debt was created — avoids inflating
+      // past months where the user had already budgeted for the debt manually.
+      if (debt.created_at) {
+        const created = new Date(debt.created_at);
+        const createdYear  = created.getFullYear();
+        const createdMonth = created.getMonth() + 1;
+        if (year < createdYear || (year === createdYear && month < createdMonth)) return;
+      }
+
       const monthly = debt.installment_amount +
         (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
 
@@ -1762,7 +1771,7 @@ export default function Budget() {
       if (catId) map[catId] = (map[catId] || 0) + monthly;
     });
     return map;
-  }, [allDebts, categories, userFilter]);
+  }, [allDebts, categories, userFilter, year, month]);
 
   const totalDebtBudgetForView = useMemo(
     () => Object.values(debtBudgetByCategory).reduce((s, v) => s + v, 0),
@@ -1778,13 +1787,20 @@ export default function Budget() {
     (allDebts || []).forEach(debt => {
       if (!debt.auto_pay || debt.status !== 'active' || !debt.installment_amount) return;
       if (debt.pending_amount <= 0) return;
+      // Same created_at guard as debtBudgetByCategory
+      if (debt.created_at) {
+        const created = new Date(debt.created_at);
+        const createdYear  = created.getFullYear();
+        const createdMonth = created.getMonth() + 1;
+        if (year < createdYear || (year === createdYear && month < createdMonth)) return;
+      }
       const monthly = debt.installment_amount +
         (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
       const catId = debt.subcategory_id ? subToCat[debt.subcategory_id] : null;
       if (catId) map[catId] = (map[catId] || 0) + monthly;
     });
     return Object.values(map).reduce((s, v) => s + v, 0);
-  }, [allDebts, categories]);
+  }, [allDebts, categories, year, month]);
 
   const totalBudget = useMemo(() => {
     const manual = Object.values(budgetMap).reduce((s, v) => s + (userFilter === 'all' ? v.total : v), 0);
