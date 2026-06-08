@@ -613,9 +613,10 @@ function DebtForm({ initial, users, onSave, onCancel }) {
   }));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Live preview of calculated historical values
+  // Live preview of calculated historical values.
+  // B defaults to P when empty → "brand new debt, no prior payments".
   const P = Number(form.total_amount)       || 0;
-  const B = Number(form.current_balance)    || 0;
+  const B = form.current_balance !== '' ? (Number(form.current_balance) || 0) : P;
   const C = Number(form.installment_amount) || 0;
   const r = Number(form.annual_rate)        || 0;
   const previewCapital  = P > 0 && B >= 0 && B < P ? Math.round(P - B) : 0;
@@ -625,15 +626,16 @@ function DebtForm({ initial, users, onSave, onCancel }) {
     e.preventDefault();
     if (!form.name || !P) return;
 
-    // For edit mode, tracked payments already reduce the balance.
-    // Adjust historical so the computed pending_amount matches what the user entered.
+    // Compute historical fields using the effective B (defaults to P when empty).
     let historical_capital_paid, historical_interest_paid;
     if (isEdit) {
+      // In edit mode, subtract already-tracked payments so totals stay correct.
       const trackedCapital  = initial.total_capital_paid  - initial.historical_capital_paid;
       const trackedInterest = initial.total_interest_paid - initial.historical_interest_paid;
       historical_capital_paid  = Math.max(Math.round(P - B) - trackedCapital,  0);
       historical_interest_paid = Math.max(previewInterest  - trackedInterest, 0);
     } else {
+      // Create mode: previewCapital = 0 when B = P (no prior payments — correct).
       historical_capital_paid  = previewCapital;
       historical_interest_paid = previewInterest;
     }
@@ -671,9 +673,12 @@ function DebtForm({ initial, users, onSave, onCancel }) {
             onChange={e => set('total_amount', e.target.value)} placeholder="0" min="1" required />
         </div>
         <div className="field">
-          <label className="field-label">Saldo actual (lo que debes hoy)</label>
+          <label className="field-label">
+            Saldo actual <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>(vacío = deuda nueva, sin pagos previos)</span>
+          </label>
           <input type="number" className="input mono" value={form.current_balance}
-            onChange={e => set('current_balance', e.target.value)} placeholder="0" min="0" required />
+            onChange={e => set('current_balance', e.target.value)}
+            placeholder="Dejar vacío si es deuda nueva" min="0" />
         </div>
       </div>
 
@@ -1647,8 +1652,8 @@ export default function Budget() {
   };
 
   // ── Debt actions ─────────────────────────────────────────────────────────────
-  const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await Promise.all([loadDebts(), reloadCategories()]); } catch (err) { console.error(err); } };
-  const handleEditDebt      = async (data)           => { try { await updateDebt(editingDebt.id, data); setEditingDebt(null); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await Promise.all([loadDebts(), reloadCategories()]); } catch (err) { console.error(err); alert(`Error al crear la deuda: ${err?.response?.data?.detail ?? err?.message ?? err}`); } };
+  const handleEditDebt      = async (data)           => { try { await updateDebt(editingDebt.id, data); setEditingDebt(null); await loadDebts(); } catch (err) { console.error(err); alert(`Error al guardar: ${err?.response?.data?.detail ?? err?.message ?? err}`); } };
   const handleDeleteDebt    = async (id)             => { if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return; try { await deleteDebt(id); await loadDebts(); } catch (err) { console.error(err); } };
   const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
   const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };
