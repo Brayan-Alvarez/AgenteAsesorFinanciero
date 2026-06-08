@@ -51,7 +51,8 @@ async def create_debt(body: DebtCreate):
         return q.get_debt(debt["id"])
     except Exception as exc:
         logger.exception("POST /api/debts failed.")
-        raise HTTPException(500, "Could not create debt.") from exc
+        # Expose detail in dev so we can diagnose DB errors without Railway logs
+        raise HTTPException(500, f"Could not create debt: {type(exc).__name__}: {exc}") from exc
 
 
 # NOTE: /debts/process must be registered before /debts/{debt_id} to avoid
