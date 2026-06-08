@@ -2001,8 +2001,23 @@ export default function Budget() {
         map[uid] = (map[uid] || 0) + amt;
       });
     }
+    // Add auto-pay debt installments per owner (same created_at guard as debtBudgetByCategory)
+    (allDebts || []).forEach(debt => {
+      if (!debt.auto_pay || debt.status !== 'active' || !debt.installment_amount) return;
+      if (debt.pending_amount <= 0) return;
+      if (!debt.user_id) return; // shared debts have no individual owner to attribute to
+      if (debt.created_at) {
+        const created = new Date(debt.created_at);
+        const cy = created.getFullYear();
+        const cm = created.getMonth() + 1;
+        if (year < cy || (year === cy && month < cm)) return;
+      }
+      const monthly = debt.installment_amount +
+        (debt.payment_day_2 ? (debt.installment_amount_2 || debt.installment_amount) : 0);
+      map[debt.user_id] = (map[debt.user_id] || 0) + monthly;
+    });
     return map;
-  }, [allBudgetRows, subscriptionsCat, subscriptionsByUser]);
+  }, [allBudgetRows, subscriptionsCat, subscriptionsByUser, allDebts, year, month]);
 
   const totalPending = debts.reduce((s, d) => s + d.pending_amount, 0);
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
