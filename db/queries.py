@@ -973,9 +973,12 @@ def generate_income_transactions(year: int, month: int) -> int:
         if amount <= 0:
             continue
 
-        # Skip if ANY income transaction already exists for this user+month
+        # Skip only if an auto-generated income transaction (in the "Ingresos" category)
+        # already exists for this user+month.  Manual income entries in other categories
+        # must not block the auto-generation (that was the original bug for Belmont).
         existing = sb.table("transactions").select("id") \
             .eq("user_id", user_id).eq("type", "income") \
+            .eq("category_id", cat_id) \
             .gte("date", lo).lt("date", hi) \
             .execute()
         if existing.data:
