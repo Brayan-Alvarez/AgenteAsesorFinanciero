@@ -2952,11 +2952,12 @@ export default function Budget() {
           )}
 
           {/* Prima create / edit modal */}
-          {showPrimaForm && (
-            <Modal
-              title={editingPrima ? 'Editar prima' : 'Agregar prima'}
-              onClose={() => { setShowPrimaForm(false); setEditingPrima(null); }}
-            >
+          <Modal
+            open={showPrimaForm}
+            title={editingPrima ? 'Editar prima' : 'Agregar prima'}
+            onClose={() => { setShowPrimaForm(false); setEditingPrima(null); }}
+          >
+            {showPrimaForm && (
               <PrimaForm
                 userId={primaTargetUser}
                 users={users}
@@ -2965,8 +2966,8 @@ export default function Budget() {
                 onSave={handleSavePrima}
                 onCancel={() => { setShowPrimaForm(false); setEditingPrima(null); }}
               />
-            </Modal>
-          )}
+            )}
+          </Modal>
 
           {totalIncome === 0 && (
             <div style={{ marginTop: 20, padding: '14px 18px', background: 'var(--bg-2)', borderRadius: 10, border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.7 }}>
