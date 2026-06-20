@@ -1367,25 +1367,35 @@ function SubscriptionCard({ sub, users, categories, onEdit, onCancel }) {
 const MONTHS_PRIMA = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-function PrimaForm({ userId, users, initial, onSave, onCancel }) {
-  const user = users.find(u => u.id === userId);
+function PrimaForm({ userId, users, userIncome, initial, onSave, onCancel }) {
+  const user    = users.find(u => u.id === userId);
+  const [mode, setMode] = useState(initial?.salary_pct ? 'pct' : 'fixed');
   const [form, setForm] = useState({
     month:       initial?.month       ?? 6,
-    amount:      initial?.amount      ? String(initial.amount) : '',
+    amount:      initial?.amount && !initial?.salary_pct ? String(initial.amount) : '',
+    pct:         initial?.salary_pct  ? String(initial.salary_pct) : '50',
     description: initial?.description ?? 'Prima',
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Computed COP amount when in pct mode
+  const computedAmount = mode === 'pct' && form.pct && userIncome
+    ? Math.round(userIncome * Number(form.pct) / 100)
+    : null;
+
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.amount) return;
+    const isPct = mode === 'pct';
+    if (isPct ? !form.pct : !form.amount) return;
     setSaving(true);
     try {
       await onSave({
-        user_id:     userId,
-        month:       Number(form.month),
-        amount:      Number(form.amount),
+        user_id:    userId,
+        month:      Number(form.month),
+        // For pct mode: store the computed snapshot; backend recomputes from income at process time
+        amount:     isPct ? (computedAmount ?? 0) : Number(form.amount),
+        salary_pct: isPct ? Number(form.pct) : null,
         description: form.description.trim() || 'Prima',
       });
     } finally {
@@ -1401,6 +1411,19 @@ function PrimaForm({ userId, users, initial, onSave, onCancel }) {
           <div style={{ fontWeight: 500 }}>{user.name}</div>
         </div>
       )}
+
+      {/* Mode toggle */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {[['fixed', '💰 Monto fijo'], ['pct', '% del sueldo']].map(([val, label]) => (
+          <button key={val} type="button" className="btn"
+            style={{ flex: 1, justifyContent: 'center', borderColor: mode === val ? 'var(--primary)' : 'var(--border)', background: mode === val ? 'var(--surface-2)' : 'var(--bg-2)', fontSize: 13 }}
+            onClick={() => setMode(val)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="field">
           <label className="field-label">Mes en que se paga</label>
@@ -1410,21 +1433,46 @@ function PrimaForm({ userId, users, initial, onSave, onCancel }) {
             ))}
           </select>
         </div>
-        <div className="field">
-          <label className="field-label">Monto (COP)</label>
-          <input type="number" className="input mono" value={form.amount}
-            onChange={e => set('amount', e.target.value)}
-            placeholder="0" min="1" required autoFocus />
-        </div>
+        {mode === 'fixed' ? (
+          <div className="field">
+            <label className="field-label">Monto (COP)</label>
+            <input type="number" className="input mono" value={form.amount}
+              onChange={e => set('amount', e.target.value)}
+              placeholder="0" min="1" required autoFocus />
+          </div>
+        ) : (
+          <div className="field">
+            <label className="field-label">Porcentaje del sueldo</label>
+            <div style={{ position: 'relative' }}>
+              <input type="number" className="input mono" value={form.pct}
+                onChange={e => set('pct', e.target.value)}
+                placeholder="50" min="1" max="200" required autoFocus
+                style={{ paddingRight: 36 }} />
+              <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-mute)', pointerEvents: 'none' }}>%</span>
+            </div>
+            {computedAmount !== null && (
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--primary)' }}>
+                = {fmt(computedAmount)} este mes
+              </div>
+            )}
+            {!userIncome && (
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-mute)' }}>
+                Configura el ingreso primero para ver el valor calculado.
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div className="field">
         <label className="field-label">Descripción</label>
         <input className="input" value={form.description}
           onChange={e => set('description', e.target.value)}
-          placeholder="Ej: Prima de mitad de año, Prima vacaciones" />
+          placeholder="Ej: Prima legal, Prima extralegal" />
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 6 }}>
-        Se genera automáticamente como ingreso cada año en el mes seleccionado.
+        {mode === 'pct'
+          ? 'El monto se calcula automáticamente sobre el sueldo vigente cada vez que se genera.'
+          : 'Se genera automáticamente como ingreso cada año en el mes seleccionado.'}
       </div>
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
         <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
@@ -1573,29 +1621,39 @@ function UserIncomeCard({ user, amount, primaTotal, budgetForUser, totalIncome,
           {userPrimas.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-mute)', fontStyle: 'italic' }}>Sin primas configuradas</div>
           ) : (
-            userPrimas.map(p => (
-              <div key={p.id} style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0',
-                fontSize: 12, borderBottom: '1px solid var(--border)',
-              }}>
-                <span style={{ fontSize: 16, flexShrink: 0 }}>🎁</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500 }}>{p.description}</div>
-                  <div style={{ color: 'var(--text-mute)', fontSize: 11 }}>
-                    {MONTHS_PRIMA[p.month - 1]}
+            userPrimas.map(p => {
+              const displayAmt = p.salary_pct
+                ? Math.round(amount * p.salary_pct / 100)
+                : p.amount;
+              return (
+                <div key={p.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0',
+                  fontSize: 12, borderBottom: '1px solid var(--border)',
+                }}>
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>🎁</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500 }}>{p.description}</div>
+                    <div style={{ color: 'var(--text-mute)', fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {MONTHS_PRIMA[p.month - 1]}
+                      {p.salary_pct && (
+                        <span style={{ background: 'var(--primary)22', color: 'var(--primary)', borderRadius: 99, padding: '0 5px', fontWeight: 600 }}>
+                          {p.salary_pct}%
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  <span className="mono" style={{ fontWeight: 600, color: 'var(--primary)', flexShrink: 0 }}>
+                    {displayAmt > 0 ? fmt(displayAmt, { compact: true }) : `${p.salary_pct}% del sueldo`}
+                  </span>
+                  <button className="btn" style={{ padding: '2px 5px' }} onClick={() => onEditPrima(p)}>
+                    <Edit2 size={11} />
+                  </button>
+                  <button className="btn" style={{ padding: '2px 5px', color: 'var(--red)' }} onClick={() => onDeletePrima(p.id)}>
+                    <X size={11} />
+                  </button>
                 </div>
-                <span className="mono" style={{ fontWeight: 600, color: 'var(--primary)', flexShrink: 0 }}>
-                  {fmt(p.amount, { compact: true })}
-                </span>
-                <button className="btn" style={{ padding: '2px 5px' }} onClick={() => onEditPrima(p)}>
-                  <Edit2 size={11} />
-                </button>
-                <button className="btn" style={{ padding: '2px 5px', color: 'var(--red)' }} onClick={() => onDeletePrima(p.id)}>
-                  <X size={11} />
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -2131,10 +2189,15 @@ export default function Budget() {
   const primasAmountByUser = useMemo(() => {
     const map = {};
     primasThisMonth.forEach(p => {
-      if (p.user_id) map[p.user_id] = (map[p.user_id] || 0) + p.amount;
+      if (!p.user_id) return;
+      // If salary_pct is set, compute from the user's base income (incomeMap excludes primas)
+      const amt = p.salary_pct
+        ? Math.round((incomeMap[p.user_id] || 0) * p.salary_pct / 100)
+        : p.amount;
+      map[p.user_id] = (map[p.user_id] || 0) + amt;
     });
     return map;
-  }, [primasThisMonth]);
+  }, [primasThisMonth, incomeMap]);
 
   // Effective income = regular salary + primas for this month
   const effectiveIncomeMap = useMemo(() => {
@@ -2885,6 +2948,7 @@ export default function Budget() {
               <PrimaForm
                 userId={primaTargetUser}
                 users={users}
+                userIncome={incomeMap[primaTargetUser] ?? 0}
                 initial={editingPrima}
                 onSave={handleSavePrima}
                 onCancel={() => { setShowPrimaForm(false); setEditingPrima(null); }}

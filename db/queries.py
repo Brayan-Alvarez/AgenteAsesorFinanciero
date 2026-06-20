@@ -1042,13 +1042,17 @@ def get_primas(user_id: Optional[str] = None) -> list[dict]:
 
 
 def create_prima(user_id: str, month: int, amount: int,
-                 description: str = "Prima") -> dict:
-    res = _sb().table("primas").insert({
+                 description: str = "Prima",
+                 salary_pct: Optional[int] = None) -> dict:
+    data: dict = {
         "user_id":     user_id,
         "month":       month,
         "amount":      amount,
         "description": description,
-    }).execute()
+    }
+    if salary_pct is not None:
+        data["salary_pct"] = salary_pct
+    res = _sb().table("primas").insert(data).execute()
     return res.data[0]
 
 
@@ -1093,12 +1097,23 @@ def process_pending_primas(year: int, month: int) -> int:
         if existing.data:
             continue
 
+        # If salary_pct is set, compute the amount from the user's effective income
+        if prima.get("salary_pct"):
+            income_rows = get_income(year, month, prima["user_id"])
+            base_income  = income_rows[0]["amount"] if income_rows else 0
+            amount       = round(base_income * prima["salary_pct"] / 100)
+        else:
+            amount = prima["amount"]
+
+        if amount <= 0:
+            continue
+
         sb.table("transactions").insert({
             "user_id":     prima["user_id"],
             "date":        lo,
             "category_id": cat_id,
             "description": prima["description"],
-            "amount":      prima["amount"],
+            "amount":      amount,
             "type":        "income",
             "prima_id":    prima["id"],
         }).execute()

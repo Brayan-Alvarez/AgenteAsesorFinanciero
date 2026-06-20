@@ -414,6 +414,7 @@ class PrimaOut(BaseModel):
     user_id: str
     month: int
     amount: int
+    salary_pct: Optional[int] = None   # if set, amount is recomputed from income × pct at process time
     description: str
     is_active: bool
     created_at: str
@@ -422,10 +423,12 @@ class PrimaOut(BaseModel):
 class PrimaCreate(BaseModel):
     user_id: str
     month: int = Field(..., ge=1, le=12)
-    amount: int = Field(..., gt=0)
+    amount: int = Field(..., ge=0)
+    salary_pct: Optional[int] = Field(None, ge=1, le=200)
     description: str = "Prima"
 
 class PrimaUpdate(BaseModel):
     month: Optional[int] = Field(None, ge=1, le=12)
-    amount: Optional[int] = Field(None, gt=0)
+    amount: Optional[int] = Field(None, ge=0)
+    salary_pct: Optional[int] = Field(None, ge=1, le=200)
     description: Optional[str] = None
