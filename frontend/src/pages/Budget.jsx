@@ -1885,15 +1885,23 @@ export default function Budget() {
   );
 
   // Per-user totals — same filter: only "Suscripciones" category subs.
+  // Subs with no owner (user_id = null / "Pareja") appear in every individual
+  // user's budget — they're shared costs so each person sees them.
   const subscriptionsByUser = useMemo(() => {
     const map = {};
     subscriptions
       .filter(sub => subscriptionsCat && sub.category_id === subscriptionsCat.id)
       .forEach(sub => {
-        if (sub.user_id) map[sub.user_id] = (map[sub.user_id] || 0) + sub.amount;
+        if (sub.user_id) {
+          map[sub.user_id] = (map[sub.user_id] || 0) + sub.amount;
+        } else {
+          users.forEach(u => {
+            map[u.id] = (map[u.id] || 0) + sub.amount;
+          });
+        }
       });
     return map;
-  }, [subscriptions, subscriptionsCat]);
+  }, [subscriptions, subscriptionsCat, users]);
 
   // How much of the subscription total belongs to the currently selected user/view.
   // All-users view → full household total. Individual view → only that user's subs.
@@ -2268,17 +2276,21 @@ export default function Budget() {
   }, [removePrimaLocal]);
 
   const handleSavePrima = useCallback(async (data) => {
-    if (editingPrima) {
-      const updated = await updatePrima(editingPrima.id, data);
-      updatePrimaLocal(updated);
-    } else {
-      const created = await createPrima(data);
-      addPrimaLocal(created);
-      // Process immediately so the income transaction appears right away
-      await processPrimas(year, month).catch(() => {});
+    try {
+      if (editingPrima) {
+        const updated = await updatePrima(editingPrima.id, data);
+        updatePrimaLocal(updated);
+      } else {
+        const created = await createPrima(data);
+        addPrimaLocal(created);
+        // Process immediately so the income transaction appears right away
+        await processPrimas(year, month).catch(() => {});
+      }
+      setShowPrimaForm(false);
+      setEditingPrima(null);
+    } catch (err) {
+      alert(`Error al guardar la prima: ${err?.response?.data?.detail ?? err?.message ?? err}`);
     }
-    setShowPrimaForm(false);
-    setEditingPrima(null);
   }, [editingPrima, updatePrimaLocal, addPrimaLocal, year, month]);
 
   return (

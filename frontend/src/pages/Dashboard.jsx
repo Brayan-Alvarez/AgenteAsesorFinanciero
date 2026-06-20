@@ -41,7 +41,7 @@ const MONTHS_LONG  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','
 // ---------------------------------------------------------------------------
 
 export default function Dashboard({ openTxnForm }) {
-  const { transactions, categories, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
+  const { transactions, categories, subscriptions, userFilter, setUserFilter, getUser, isLoadingTxns } = useAppContext();
 
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -85,7 +85,21 @@ export default function Dashboard({ openTxnForm }) {
   const balance      = incomeTotal - expenseTotal;
 
   // ── Budget totals from Supabase summary ────────────────────────────────────
-  const budgetTotal = budgetSummary.reduce((s, c) => s + (c.planned || 0), 0);
+  // /api/summary/budget only returns manually-set budget rows, so we add the
+  // subscription auto-budget on top (same logic as Budget.jsx subsAmountForView).
+  const subsCatId = useMemo(
+    () => categories.find(c => c.name === 'Suscripciones')?.id,
+    [categories],
+  );
+  const subsAutoTotal = useMemo(() => {
+    if (!subsCatId) return 0;
+    const userId = userFilter !== 'all' ? userFilter : null;
+    return subscriptions
+      .filter(s => s.category_id === subsCatId)
+      .filter(s => !userId || !s.user_id || s.user_id === userId)
+      .reduce((sum, s) => sum + s.amount, 0);
+  }, [subscriptions, subsCatId, userFilter]);
+  const budgetTotal = budgetSummary.reduce((s, c) => s + (c.planned || 0), 0) + subsAutoTotal;
   const budgetPct   = budgetTotal > 0 ? (expenseTotal / budgetTotal) * 100 : 0;
   const daysInMonth = new Date(year, month, 0).getDate();
   const today       = (now.getMonth() + 1 === month && now.getFullYear() === year) ? now.getDate() : daysInMonth;
