@@ -20,6 +20,7 @@ import {
   getSubscriptions, processSubscriptions,
   getDebts, processDebtInstallments,
   generateIncomeTransactions,
+  getPrimas, processPrimas,
 } from '../api/client.js';
 
 const AppContext = createContext(null);
@@ -56,6 +57,7 @@ export function AppProvider({ children }) {
   const [transactions,   setTransactions]   = useState([]);
   const [subscriptions,  setSubscriptions]  = useState([]);
   const [debts,          setDebts]          = useState([]);
+  const [primas,         setPrimas]         = useState([]);
   const [isLoadingTxns,  setIsLoadingTxns]  = useState(true);
   const [txnsError,      setTxnsError]      = useState(null);
 
@@ -107,8 +109,12 @@ export function AppProvider({ children }) {
             console.warn('Income transaction auto-generation failed:', err);
             return { created: 0 };
           }),
-        ]).then(([subResult, debtResult, incomeResult]) => {
-          const totalNew = (subResult.created ?? 0) + (debtResult.created ?? 0) + (incomeResult.created ?? 0);
+          processPrimas(year, currentMonth).catch(err => {
+            console.warn('Prima auto-processing failed:', err);
+            return { created: 0 };
+          }),
+        ]).then(([subResult, debtResult, incomeResult, primaResult]) => {
+          const totalNew = (subResult.created ?? 0) + (debtResult.created ?? 0) + (incomeResult.created ?? 0) + (primaResult.created ?? 0);
           if (totalNew > 0) {
             return getTransactionsDb({ year }).then(txns => {
               setTransactions(txns.map(t => mapTxn(t, catsData, usersData)));
@@ -127,6 +133,10 @@ export function AppProvider({ children }) {
     getDebts()
       .then(d => setDebts(d))
       .catch(err => console.warn('Failed to load debts:', err));
+
+    getPrimas()
+      .then(p => setPrimas(p))
+      .catch(err => console.warn('Failed to load primas:', err));
 
     // Legacy Sheets data for Dashboard charts — independent, can fail separately
     Promise.all([getBudget(), getTrend()])
@@ -280,6 +290,18 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  const reloadPrimas = useCallback(async () => {
+    try {
+      setPrimas(await getPrimas());
+    } catch (err) {
+      console.error('Failed to reload primas:', err);
+    }
+  }, []);
+
+  const addPrimaLocal    = useCallback((p) => setPrimas(prev => [...prev, p]), []);
+  const updatePrimaLocal = useCallback((p) => setPrimas(prev => prev.map(x => x.id === p.id ? p : x)), []);
+  const removePrimaLocal = useCallback((id) => setPrimas(prev => prev.filter(x => x.id !== id)), []);
+
   const value = useMemo(() => ({
     // Supabase data
     users,
@@ -321,6 +343,13 @@ export function AppProvider({ children }) {
     // Debt management
     reloadDebts,
 
+    // Prima management
+    primas,
+    reloadPrimas,
+    addPrimaLocal,
+    updatePrimaLocal,
+    removePrimaLocal,
+
     // Legacy Sheets data (Dashboard)
     apiBudget,
     apiTrend,
@@ -340,6 +369,7 @@ export function AppProvider({ children }) {
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
     reloadSubscriptions, addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
     debts, debtsBySubcategoryId, reloadDebts,
+    primas, reloadPrimas, addPrimaLocal, updatePrimaLocal, removePrimaLocal,
     apiBudget, apiTrend, expensesCache, fetchExpenses, isLoadingApi, apiError,
     chatHistory,
   ]);

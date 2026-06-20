@@ -20,6 +20,7 @@ import {
   migrateCategory,
   createSubscription, updateSubscription, cancelSubscription,
   getIncome, upsertIncome, getIncomeHistory, seedIncomeHistory,
+  createPrima, updatePrima, deletePrima, processPrimas,
 } from '../api/client.js';
 import { fmt } from './Dashboard.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -1362,6 +1363,79 @@ function SubscriptionCard({ sub, users, categories, onEdit, onCancel }) {
   );
 }
 
+// ── Prima form (create / edit) ────────────────────────────────────────────────
+const MONTHS_PRIMA = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function PrimaForm({ userId, users, initial, onSave, onCancel }) {
+  const user = users.find(u => u.id === userId);
+  const [form, setForm] = useState({
+    month:       initial?.month       ?? 6,
+    amount:      initial?.amount      ? String(initial.amount) : '',
+    description: initial?.description ?? 'Prima',
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.amount) return;
+    setSaving(true);
+    try {
+      await onSave({
+        user_id:     userId,
+        month:       Number(form.month),
+        amount:      Number(form.amount),
+        description: form.description.trim() || 'Prima',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit}>
+      {user && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, padding: '10px 14px', background: 'var(--bg-2)', borderRadius: 8 }}>
+          <Avatar user={user} />
+          <div style={{ fontWeight: 500 }}>{user.name}</div>
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label className="field-label">Mes en que se paga</label>
+          <select className="input" value={form.month} onChange={e => set('month', Number(e.target.value))}>
+            {MONTHS_PRIMA.map((name, i) => (
+              <option key={i + 1} value={i + 1}>{name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label className="field-label">Monto (COP)</label>
+          <input type="number" className="input mono" value={form.amount}
+            onChange={e => set('amount', e.target.value)}
+            placeholder="0" min="1" required autoFocus />
+        </div>
+      </div>
+      <div className="field">
+        <label className="field-label">Descripción</label>
+        <input className="input" value={form.description}
+          onChange={e => set('description', e.target.value)}
+          placeholder="Ej: Prima de mitad de año, Prima vacaciones" />
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 6 }}>
+        Se genera automáticamente como ingreso cada año en el mes seleccionado.
+      </div>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn primary" disabled={saving}>
+          {saving ? 'Guardando…' : initial ? <><Check size={14} /> Guardar</> : <><Plus size={14} /> Agregar prima</>}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Editable income cell ──────────────────────────────────────────────────────
 function IncomeCell({ amount, onSave }) {
   const [editing, setEditing] = useState(false);
@@ -1408,13 +1482,15 @@ function IncomeCell({ amount, onSave }) {
 }
 
 // ── Income card per user ──────────────────────────────────────────────────────
-function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, history }) {
+function UserIncomeCard({ user, amount, primaTotal, budgetForUser, totalIncome,
+                          onSave, history, userPrimas, onAddPrima, onEditPrima, onDeletePrima }) {
   const [expanded, setExpanded] = useState(false);
 
-  const pct     = amount > 0 ? Math.min((budgetForUser / amount) * 100, 200) : 0;
-  const over    = budgetForUser > amount && amount > 0;
-  const free    = amount - budgetForUser;
-  const share   = totalIncome > 0 ? (amount / totalIncome) * 100 : 0;
+  const effectiveAmount = amount + primaTotal;
+  const pct   = effectiveAmount > 0 ? Math.min((budgetForUser / effectiveAmount) * 100, 200) : 0;
+  const over  = budgetForUser > effectiveAmount && effectiveAmount > 0;
+  const free  = effectiveAmount - budgetForUser;
+  const share = totalIncome > 0 ? (effectiveAmount / totalIncome) * 100 : 0;
 
   return (
     <div className="card" style={{ borderLeft: `4px solid ${user.color}`, padding: 0, overflow: 'hidden' }}>
@@ -1424,7 +1500,7 @@ function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, hist
           <Avatar user={user} size="lg" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 15 }}>{user.name}</div>
-            {totalIncome > 0 && amount > 0 && (
+            {totalIncome > 0 && effectiveAmount > 0 && (
               <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 2 }}>
                 {share.toFixed(0)}% del ingreso total del hogar
               </div>
@@ -1433,16 +1509,31 @@ function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, hist
           <TrendingUp size={18} style={{ color: user.color, flexShrink: 0 }} />
         </div>
 
-        {/* Editable income amount */}
-        <div style={{ marginBottom: 14 }}>
+        {/* Editable regular salary */}
+        <div style={{ marginBottom: primaTotal > 0 ? 8 : 14 }}>
           <div style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-            Ingreso mensual
+            Sueldo mensual
           </div>
           <IncomeCell amount={amount} onSave={(v) => onSave(user.id, v)} />
         </div>
 
-        {/* Budget vs income breakdown */}
-        {amount > 0 && (
+        {/* Prima badge — only when this month has a prima */}
+        {primaTotal > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 12px', marginBottom: 14,
+            background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)',
+            borderRadius: 8, fontSize: 13,
+          }}>
+            <span style={{ color: 'var(--primary)' }}>🎁 Prima este mes</span>
+            <span className="mono" style={{ fontWeight: 700, color: 'var(--primary)' }}>
+              +{fmt(primaTotal, { compact: true })}
+            </span>
+          </div>
+        )}
+
+        {/* Budget vs effective income bar */}
+        {effectiveAmount > 0 && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
               <span style={{ color: 'var(--text-mute)' }}>
@@ -1460,17 +1551,58 @@ function UserIncomeCard({ user, amount, budgetForUser, totalIncome, onSave, hist
             </div>
             <div style={{ fontSize: 11, color: over ? 'var(--red)' : 'var(--text-mute)' }} className="mono">
               {pct.toFixed(0)}% comprometido
+              {primaTotal > 0 && (
+                <span style={{ color: 'var(--text-mute)', fontWeight: 400 }}>
+                  {' · '}sobre {fmt(effectiveAmount, { compact: true })} efectivos
+                </span>
+              )}
             </div>
           </div>
         )}
 
+        {/* Configured primas list */}
+        <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Primas
+            </span>
+            <button className="btn" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onAddPrima(user.id)}>
+              <Plus size={11} /> Agregar
+            </button>
+          </div>
+          {userPrimas.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-mute)', fontStyle: 'italic' }}>Sin primas configuradas</div>
+          ) : (
+            userPrimas.map(p => (
+              <div key={p.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0',
+                fontSize: 12, borderBottom: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>🎁</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500 }}>{p.description}</div>
+                  <div style={{ color: 'var(--text-mute)', fontSize: 11 }}>
+                    {MONTHS_PRIMA[p.month - 1]}
+                  </div>
+                </div>
+                <span className="mono" style={{ fontWeight: 600, color: 'var(--primary)', flexShrink: 0 }}>
+                  {fmt(p.amount, { compact: true })}
+                </span>
+                <button className="btn" style={{ padding: '2px 5px' }} onClick={() => onEditPrima(p)}>
+                  <Edit2 size={11} />
+                </button>
+                <button className="btn" style={{ padding: '2px 5px', color: 'var(--red)' }} onClick={() => onDeletePrima(p.id)}>
+                  <X size={11} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
         {/* History toggle */}
         {history.length > 0 && (
-          <button
-            className="btn ghost"
-            style={{ width: '100%', marginTop: 14, fontSize: 12 }}
-            onClick={() => setExpanded(e => !e)}
-          >
+          <button className="btn ghost" style={{ width: '100%', marginTop: 14, fontSize: 12 }}
+            onClick={() => setExpanded(e => !e)}>
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             Historial de ingresos ({history.length})
           </button>
@@ -1513,6 +1645,7 @@ export default function Budget() {
     reloadCategories, reloadTransactions,
     addCategoryLocal, addSubcategoryLocal, deactivateCategoryLocal, deactivateSubcategoryLocal,
     addSubscriptionLocal, removeSubscriptionLocal, updateSubscriptionLocal,
+    primas, addPrimaLocal, updatePrimaLocal, removePrimaLocal,
   } = useAppContext();
 
   // Only show active categories in Budget
@@ -1544,6 +1677,11 @@ export default function Budget() {
   const [subFormCat,    setSubFormCat]    = useState(null); // category object for subcategory form
   const [subFormError,  setSubFormError]  = useState(null);
   const [subFormSaving, setSubFormSaving] = useState(false);
+
+  // Prima modal state
+  const [showPrimaForm,    setShowPrimaForm]    = useState(false);
+  const [editingPrima,     setEditingPrima]     = useState(null);   // prima being edited, null = create
+  const [primaTargetUser,  setPrimaTargetUser]  = useState(null);   // userId when creating
 
   // Migration modal state
   const [migrationSource,  setMigrationSource]  = useState(null); // deleted category being migrated
@@ -1984,9 +2122,32 @@ export default function Budget() {
     return map;
   }, [incomeRows]);
 
+  // Primas for the currently viewed month, grouped by user
+  const primasThisMonth = useMemo(
+    () => primas.filter(p => p.month === month),
+    [primas, month],
+  );
+
+  const primasAmountByUser = useMemo(() => {
+    const map = {};
+    primasThisMonth.forEach(p => {
+      if (p.user_id) map[p.user_id] = (map[p.user_id] || 0) + p.amount;
+    });
+    return map;
+  }, [primasThisMonth]);
+
+  // Effective income = regular salary + primas for this month
+  const effectiveIncomeMap = useMemo(() => {
+    const map = { ...incomeMap };
+    Object.entries(primasAmountByUser).forEach(([uid, amt]) => {
+      map[uid] = (map[uid] || 0) + amt;
+    });
+    return map;
+  }, [incomeMap, primasAmountByUser]);
+
   const totalIncome = useMemo(
-    () => Object.values(incomeMap).reduce((s, v) => s + v, 0),
-    [incomeMap],
+    () => Object.values(effectiveIncomeMap).reduce((s, v) => s + v, 0),
+    [effectiveIncomeMap],
   );
 
   // Budget per user for the income tab — always uses allBudgetRows (all users, no filter).
@@ -2023,6 +2184,39 @@ export default function Budget() {
   const totalDebt    = debts.reduce((s, d) => s + d.total_amount, 0);
 
   const maxSortOrder = useMemo(() => Math.max(...categories.map(c => c.sort_order || 0), 0), [categories]);
+
+  // ── Prima actions ─────────────────────────────────────────────────────────────
+  const handleAddPrima = useCallback((userId) => {
+    setPrimaTargetUser(userId);
+    setEditingPrima(null);
+    setShowPrimaForm(true);
+  }, []);
+
+  const handleEditPrima = useCallback((prima) => {
+    setPrimaTargetUser(prima.user_id);
+    setEditingPrima(prima);
+    setShowPrimaForm(true);
+  }, []);
+
+  const handleDeletePrima = useCallback(async (id) => {
+    if (!confirm('¿Eliminar esta prima?')) return;
+    await deletePrima(id);
+    removePrimaLocal(id);
+  }, [removePrimaLocal]);
+
+  const handleSavePrima = useCallback(async (data) => {
+    if (editingPrima) {
+      const updated = await updatePrima(editingPrima.id, data);
+      updatePrimaLocal(updated);
+    } else {
+      const created = await createPrima(data);
+      addPrimaLocal(created);
+      // Process immediately so the income transaction appears right away
+      await processPrimas(year, month).catch(() => {});
+    }
+    setShowPrimaForm(false);
+    setEditingPrima(null);
+  }, [editingPrima, updatePrimaLocal, addPrimaLocal, year, month]);
 
   return (
     <div>
@@ -2668,13 +2862,34 @@ export default function Budget() {
                   key={u.id}
                   user={u}
                   amount={incomeMap[u.id] ?? 0}
+                  primaTotal={primasAmountByUser[u.id] ?? 0}
                   budgetForUser={budgetPerUser[u.id] ?? 0}
                   totalIncome={totalIncome}
                   onSave={handleIncomeSave}
                   history={incomeHistories[u.id] ?? []}
+                  userPrimas={primas.filter(p => p.user_id === u.id)}
+                  onAddPrima={handleAddPrima}
+                  onEditPrima={handleEditPrima}
+                  onDeletePrima={handleDeletePrima}
                 />
               ))}
             </div>
+          )}
+
+          {/* Prima create / edit modal */}
+          {showPrimaForm && (
+            <Modal
+              title={editingPrima ? 'Editar prima' : 'Agregar prima'}
+              onClose={() => { setShowPrimaForm(false); setEditingPrima(null); }}
+            >
+              <PrimaForm
+                userId={primaTargetUser}
+                users={users}
+                initial={editingPrima}
+                onSave={handleSavePrima}
+                onCancel={() => { setShowPrimaForm(false); setEditingPrima(null); }}
+              />
+            </Modal>
           )}
 
           {totalIncome === 0 && (

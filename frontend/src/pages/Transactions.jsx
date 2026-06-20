@@ -81,6 +81,30 @@ export default function Transactions({ openTxnForm }) {
   }, [txns]);
 
   // ── Bulk actions ──────────────────────────────────────────────────────────────
+  const duplicateToCurrentMonth = useCallback(async () => {
+    const selected = txns.filter(t => selectedIds.has(t.id));
+    setDuplicating(true);
+    try {
+      await Promise.all(selected.map(t =>
+        addTransaction({
+          userId:        t.userId,
+          date:          t.date,
+          categoryId:    t.categoryId,
+          subcategoryId: t.subcategoryId ?? null,
+          desc:          t.desc,
+          amount:        t.amount,
+          type:          t.type,
+          notes:         t.notes ?? null,
+        })
+      ));
+      clearSelection();
+    } catch (err) {
+      console.error('Failed to duplicate transactions:', err);
+    } finally {
+      setDuplicating(false);
+    }
+  }, [txns, selectedIds, addTransaction, clearSelection]);
+
   const duplicateToNextMonth = useCallback(async () => {
     const selected = txns.filter(t => selectedIds.has(t.id));
     setDuplicating(true);
@@ -264,7 +288,7 @@ export default function Transactions({ openTxnForm }) {
                               ? <Check size={16} />
                               : (isHovered || hasSelection)
                                 ? <Check size={14} style={{ opacity: 0.4 }} />
-                                : cat.icon}
+                                : sub?.icon ?? cat.icon}
                           </div>
                         </td>
 
@@ -331,7 +355,18 @@ export default function Transactions({ openTxnForm }) {
 
           <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
 
-          {/* Duplicate */}
+          {/* Duplicate — same month */}
+          <button
+            className="btn"
+            style={{ fontSize: 13 }}
+            onClick={duplicateToCurrentMonth}
+            disabled={duplicating || deleting}
+          >
+            <Copy size={14} />
+            {duplicating ? 'Duplicando…' : 'Duplicar en este mes'}
+          </button>
+
+          {/* Duplicate — next month */}
           <button
             className="btn"
             style={{ fontSize: 13 }}
@@ -339,7 +374,7 @@ export default function Transactions({ openTxnForm }) {
             disabled={duplicating || deleting}
           >
             <Copy size={14} />
-            {duplicating ? 'Duplicando…' : 'Duplicar al mes siguiente'}
+            Duplicar al mes siguiente
           </button>
 
           {/* Delete */}

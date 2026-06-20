@@ -403,3 +403,29 @@ class IncomeHistoryOut(BaseModel):
     new_amount: int
     notes: Optional[str]
     changed_at: str
+
+
+# ---------------------------------------------------------------------------
+# Primas (bonuses — June / December / any month, auto-generate income tx)
+# ---------------------------------------------------------------------------
+
+class PrimaOut(BaseModel):
+    id: str
+    user_id: str
+    month: int
+    amount: int
+    description: str
+    is_active: bool
+    created_at: str
+    users: Optional[dict] = None
+
+class PrimaCreate(BaseModel):
+    user_id: str
+    month: int = Field(..., ge=1, le=12)
+    amount: int = Field(..., gt=0)
+    description: str = "Prima"
+
+class PrimaUpdate(BaseModel):
+    month: Optional[int] = Field(None, ge=1, le=12)
+    amount: Optional[int] = Field(None, gt=0)
+    description: Optional[str] = None

@@ -256,3 +256,30 @@ export async function seedIncomeHistory() {
   const response = await api.post('/api/income/seed-history');
   return response.data;
 }
+
+// ── Primas ────────────────────────────────────────────────────────────────────
+
+export async function getPrimas(userId = null) {
+  const params = userId ? { user_id: userId } : {};
+  const response = await api.get('/api/primas', { params });
+  return response.data;
+}
+
+export async function createPrima(data) {
+  const response = await api.post('/api/primas', data);
+  return response.data;
+}
+
+export async function updatePrima(id, data) {
+  const response = await api.put(`/api/primas/${id}`, data);
+  return response.data;
+}
+
+export async function deletePrima(id) {
+  await api.delete(`/api/primas/${id}`);
+}
+
+export async function processPrimas(year, month) {
+  const response = await api.post('/api/primas/process', null, { params: { year, month } });
+  return response.data;
+}

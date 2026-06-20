@@ -1023,3 +1023,82 @@ def seed_income_transactions_history() -> int:
     for (y, m) in sorted(months):
         total += generate_income_transactions(y, m)
     return total
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRIMAS (year-end / mid-year bonuses — auto-generate income transactions)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_primas(user_id: Optional[str] = None) -> list[dict]:
+    """Return all active primas, optionally filtered by user."""
+    q = _sb().table("primas").select("*, users(id, name, color, avatar)") \
+        .eq("is_active", True).order("month")
+    if user_id:
+        q = q.eq("user_id", user_id)
+    return q.execute().data
+
+
+def create_prima(user_id: str, month: int, amount: int,
+                 description: str = "Prima") -> dict:
+    res = _sb().table("primas").insert({
+        "user_id":     user_id,
+        "month":       month,
+        "amount":      amount,
+        "description": description,
+    }).execute()
+    return res.data[0]
+
+
+def update_prima(prima_id: str, **fields) -> dict:
+    res = _sb().table("primas").update(fields).eq("id", prima_id).execute()
+    return res.data[0]
+
+
+def delete_prima(prima_id: str) -> None:
+    """Soft delete — keeps historical transactions linked to this prima intact."""
+    _sb().table("primas").update({"is_active": False}).eq("id", prima_id).execute()
+
+
+def process_pending_primas(year: int, month: int) -> int:
+    """
+    Idempotent: for each active prima configured for the given month, create
+    an income transaction in that year/month if one does not already exist.
+    Uses prima_id on the transactions table for idempotency.
+    Returns the number of new transactions created.
+    """
+    from datetime import date as _date
+
+    today = _date.today()
+    if _date(year, month, 1) > _date(today.year, today.month, 1):
+        return 0  # never process future months
+
+    sb      = _sb()
+    primas  = sb.table("primas").select("*").eq("is_active", True).eq("month", month).execute().data
+    if not primas:
+        return 0
+
+    cat_id  = _get_or_create_income_category()
+    lo      = f"{year}-{month:02d}-01"
+    hi      = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
+    created = 0
+
+    for prima in primas:
+        # Idempotency: one income transaction per prima per year
+        existing = sb.table("transactions").select("id") \
+            .eq("prima_id", prima["id"]) \
+            .gte("date", lo).lt("date", hi).execute()
+        if existing.data:
+            continue
+
+        sb.table("transactions").insert({
+            "user_id":     prima["user_id"],
+            "date":        lo,
+            "category_id": cat_id,
+            "description": prima["description"],
+            "amount":      prima["amount"],
+            "type":        "income",
+            "prima_id":    prima["id"],
+        }).execute()
+        created += 1
+
+    return created

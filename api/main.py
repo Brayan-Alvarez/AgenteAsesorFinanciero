@@ -38,6 +38,7 @@ from api.routes.users import router as users_router
 from api.routes.summary import router as summary_router
 from api.routes.subscriptions import router as subscriptions_router
 from api.routes.income import router as income_router
+from api.routes.primas import router as primas_router
 
 # Load .env before anything else so that FRONTEND_ORIGIN and all other
 # config variables are available when the app starts.
@@ -100,6 +101,7 @@ app.include_router(users_router,          prefix="/api", tags=["users"])
 app.include_router(summary_router,        prefix="/api", tags=["summary"])
 app.include_router(subscriptions_router,  prefix="/api", tags=["subscriptions"])
 app.include_router(income_router,         prefix="/api", tags=["income"])
+app.include_router(primas_router,         prefix="/api", tags=["primas"])
 
 
 # ---------------------------------------------------------------------------
