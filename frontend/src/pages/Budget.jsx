@@ -1706,8 +1706,20 @@ export default function Budget() {
     primas, addPrimaLocal, updatePrimaLocal, removePrimaLocal,
   } = useAppContext();
 
-  // Only show active categories in Budget
-  const activeCategories = useMemo(() => categories.filter(c => c.is_active !== false), [categories]);
+  // Only show active categories in Budget. "Ingresos" is an income-tracking
+  // category created automatically by the income system — it should never
+  // appear as an expense budget row, so we hide it here.
+  const activeCategories = useMemo(
+    () => categories.filter(c => c.is_active !== false && c.name !== 'Ingresos'),
+    [categories],
+  );
+
+  // ID of the auto-created "Ingresos" category so we can exclude any accidental
+  // budget rows for it from all totals (income ≠ expense budget).
+  const ingresosCatId = useMemo(
+    () => categories.find(c => c.name === 'Ingresos')?.id,
+    [categories],
+  );
 
   const now = new Date();
   const [tab,   setTab]   = useState('budget');
@@ -1849,9 +1861,12 @@ export default function Budget() {
   }, [categories, transactions, userFilter, year]);
 
   const budgetMap = useMemo(() => {
+    const rows = ingresosCatId
+      ? budgetRows.filter(r => r.category_id !== ingresosCatId)
+      : budgetRows;
     if (userFilter === 'all') {
       const map = {};
-      budgetRows.forEach(row => {
+      rows.forEach(row => {
         if (!map[row.category_id]) map[row.category_id] = { total: 0, byUser: {} };
         map[row.category_id].total += row.amount;
         map[row.category_id].byUser[row.user_id] = row.amount;
@@ -1859,9 +1874,9 @@ export default function Budget() {
       return map;
     }
     const map = {};
-    budgetRows.forEach(row => { map[row.category_id] = row.amount; });
+    rows.forEach(row => { map[row.category_id] = row.amount; });
     return map;
-  }, [budgetRows, userFilter]);
+  }, [budgetRows, userFilter, ingresosCatId]);
 
   const getBudgetAmount = (catId) =>
     userFilter === 'all' ? (budgetMap[catId]?.total ?? 0) : (budgetMap[catId] ?? 0);
@@ -2014,10 +2029,12 @@ export default function Budget() {
   // All-users budget total — used in income tab regardless of who is selected.
   const totalBudgetAllUsers = useMemo(() => {
     const catTotals = {};
-    allBudgetRows.forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
+    allBudgetRows
+      .filter(r => !ingresosCatId || r.category_id !== ingresosCatId)
+      .forEach(r => { catTotals[r.category_id] = (catTotals[r.category_id] || 0) + r.amount; });
     const manual = Object.values(catTotals).reduce((s, v) => s + v, 0);
     return manual + (subscriptionsCat ? totalMonthlySubscriptions : 0) + totalCustomSubsAllUsers + totalDebtBudgetAllUsers;
-  }, [allBudgetRows, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers, totalDebtBudgetAllUsers]);
+  }, [allBudgetRows, ingresosCatId, subscriptionsCat, totalMonthlySubscriptions, totalCustomSubsAllUsers, totalDebtBudgetAllUsers]);
   const totalSpent  = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory]);
 
   // True when the user is viewing a month strictly before today's month.

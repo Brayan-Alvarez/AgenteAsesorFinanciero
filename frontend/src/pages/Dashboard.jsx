@@ -99,7 +99,16 @@ export default function Dashboard({ openTxnForm }) {
       .filter(s => !userId || !s.user_id || s.user_id === userId)
       .reduce((sum, s) => sum + s.amount, 0);
   }, [subscriptions, subsCatId, userFilter]);
-  const budgetTotal = budgetSummary.reduce((s, c) => s + (c.planned || 0), 0) + subsAutoTotal;
+  // Exclude "Ingresos" (income tracking — never an expense budget) and
+  // "Suscripciones" (handled separately by subsAutoTotal to avoid double-counting
+  // any stale manual budget rows that may exist for that category).
+  const EXCLUDED_FROM_BUDGET = useMemo(
+    () => new Set(['Ingresos', 'Suscripciones']),
+    [],
+  );
+  const budgetTotal = budgetSummary
+    .filter(c => !EXCLUDED_FROM_BUDGET.has(c.name))
+    .reduce((s, c) => s + (c.planned || 0), 0) + subsAutoTotal;
   const budgetPct   = budgetTotal > 0 ? (expenseTotal / budgetTotal) * 100 : 0;
   const daysInMonth = new Date(year, month, 0).getDate();
   const today       = (now.getMonth() + 1 === month && now.getFullYear() === year) ? now.getDate() : daysInMonth;
@@ -158,9 +167,10 @@ export default function Dashboard({ openTxnForm }) {
   // ── Categories vs budget (from Supabase summary) ───────────────────────────
   const catVsBudget = useMemo(() => {
     return budgetSummary
+      .filter(c => !EXCLUDED_FROM_BUDGET.has(c.name))
       .filter(c => c.planned > 0 || c.actual > 0)
       .sort((a, b) => b.pct_used - a.pct_used);
-  }, [budgetSummary]);
+  }, [budgetSummary, EXCLUDED_FROM_BUDGET]);
 
   // ── AI insights (deterministic rules) ─────────────────────────────────────
   const aiInsights = useMemo(() => {
