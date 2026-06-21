@@ -2570,7 +2570,7 @@ export default function Budget() {
                         <>
                           <BudgetCell
                             categoryId={cat.id}
-                            amount={manualBudget}
+                            amount={isSubsCat ? budgeted : manualBudget}
                             editable={!isSubsCat}
                             onSave={handleBudgetSave}
                           />
