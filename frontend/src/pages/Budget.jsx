@@ -1371,10 +1371,11 @@ function PrimaForm({ userId, users, userIncome, initial, onSave, onCancel }) {
   const user    = users.find(u => u.id === userId);
   const [mode, setMode] = useState(initial?.salary_pct ? 'pct' : 'fixed');
   const [form, setForm] = useState({
-    month:       initial?.month       ?? 6,
-    amount:      initial?.amount && !initial?.salary_pct ? String(initial.amount) : '',
-    pct:         initial?.salary_pct  ? String(initial.salary_pct) : '50',
-    description: initial?.description ?? 'Prima',
+    month:        initial?.month        ?? 6,
+    payment_day:  initial?.payment_day  ?? 15,
+    amount:       initial?.amount && !initial?.salary_pct ? String(initial.amount) : '',
+    pct:          initial?.salary_pct   ? String(initial.salary_pct) : '50',
+    description:  initial?.description  ?? 'Prima',
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -1391,11 +1392,12 @@ function PrimaForm({ userId, users, userIncome, initial, onSave, onCancel }) {
     setSaving(true);
     try {
       await onSave({
-        user_id:    userId,
-        month:      Number(form.month),
+        user_id:     userId,
+        month:       Number(form.month),
+        payment_day: Number(form.payment_day) || 15,
         // For pct mode: store the computed snapshot; backend recomputes from income at process time
-        amount:     isPct ? (computedAmount ?? 0) : Number(form.amount),
-        salary_pct: isPct ? Number(form.pct) : null,
+        amount:      isPct ? (computedAmount ?? 0) : Number(form.amount),
+        salary_pct:  isPct ? Number(form.pct) : null,
         description: form.description.trim() || 'Prima',
       });
     } finally {
@@ -1424,7 +1426,7 @@ function PrimaForm({ userId, users, userIncome, initial, onSave, onCancel }) {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 1fr', gap: 12 }}>
         <div className="field">
           <label className="field-label">Mes en que se paga</label>
           <select className="input" value={form.month} onChange={e => set('month', Number(e.target.value))}>
@@ -1432,6 +1434,12 @@ function PrimaForm({ userId, users, userIncome, initial, onSave, onCancel }) {
               <option key={i + 1} value={i + 1}>{name}</option>
             ))}
           </select>
+        </div>
+        <div className="field">
+          <label className="field-label">Día del mes</label>
+          <input type="number" className="input mono" value={form.payment_day}
+            onChange={e => set('payment_day', e.target.value)}
+            min="1" max="31" />
         </div>
         {mode === 'fixed' ? (
           <div className="field">
@@ -1634,7 +1642,7 @@ function UserIncomeCard({ user, amount, primaTotal, budgetForUser, totalIncome,
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 500 }}>{p.description}</div>
                     <div style={{ color: 'var(--text-mute)', fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {MONTHS_PRIMA[p.month - 1]}
+                      {MONTHS_PRIMA[p.month - 1]} · día {p.payment_day ?? 15}
                       {p.salary_pct && (
                         <span style={{ background: 'var(--primary)22', color: 'var(--primary)', borderRadius: 99, padding: '0 5px', fontWeight: 600 }}>
                           {p.salary_pct}%

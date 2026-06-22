@@ -1043,12 +1043,14 @@ def get_primas(user_id: Optional[str] = None) -> list[dict]:
 
 def create_prima(user_id: str, month: int, amount: int,
                  description: str = "Prima",
-                 salary_pct: Optional[int] = None) -> dict:
+                 salary_pct: Optional[int] = None,
+                 payment_day: int = 15) -> dict:
     data: dict = {
         "user_id":     user_id,
         "month":       month,
         "amount":      amount,
         "description": description,
+        "payment_day": payment_day,
     }
     if salary_pct is not None:
         data["salary_pct"] = salary_pct
@@ -1084,9 +1086,12 @@ def process_pending_primas(year: int, month: int) -> int:
     if not primas:
         return 0
 
+    import calendar as _cal
+
     cat_id  = _get_or_create_income_category()
     lo      = f"{year}-{month:02d}-01"
     hi      = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
+    last_day_of_month = _cal.monthrange(year, month)[1]
     created = 0
 
     for prima in primas:
@@ -1108,9 +1113,14 @@ def process_pending_primas(year: int, month: int) -> int:
         if amount <= 0:
             continue
 
+        # Clamp payment_day to the actual last day of the month (e.g. Feb 30 → Feb 28)
+        raw_day  = prima.get("payment_day") or 15
+        pay_day  = min(raw_day, last_day_of_month)
+        txn_date = f"{year}-{month:02d}-{pay_day:02d}"
+
         sb.table("transactions").insert({
             "user_id":     prima["user_id"],
-            "date":        lo,
+            "date":        txn_date,
             "category_id": cat_id,
             "description": prima["description"],
             "amount":      amount,

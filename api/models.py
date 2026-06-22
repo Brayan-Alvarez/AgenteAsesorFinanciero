@@ -413,6 +413,7 @@ class PrimaOut(BaseModel):
     id: str
     user_id: str
     month: int
+    payment_day: int = 15              # day of month when the income transaction is generated
     amount: int
     salary_pct: Optional[int] = None   # if set, amount is recomputed from income × pct at process time
     description: str
@@ -423,12 +424,14 @@ class PrimaOut(BaseModel):
 class PrimaCreate(BaseModel):
     user_id: str
     month: int = Field(..., ge=1, le=12)
+    payment_day: int = Field(15, ge=1, le=31)
     amount: int = Field(..., ge=0)
     salary_pct: Optional[int] = Field(None, ge=1, le=200)
     description: str = "Prima"
 
 class PrimaUpdate(BaseModel):
     month: Optional[int] = Field(None, ge=1, le=12)
+    payment_day: Optional[int] = Field(None, ge=1, le=31)
     amount: Optional[int] = Field(None, ge=0)
     salary_pct: Optional[int] = Field(None, ge=1, le=200)
     description: Optional[str] = None

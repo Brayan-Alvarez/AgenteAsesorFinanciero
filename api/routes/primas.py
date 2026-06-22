@@ -32,7 +32,7 @@ async def list_primas(user_id: Optional[str] = Query(None)):
 @router.post("/primas", response_model=PrimaOut, status_code=201)
 async def create_prima(body: PrimaCreate):
     try:
-        return q.create_prima(body.user_id, body.month, body.amount, body.description, body.salary_pct)
+        return q.create_prima(body.user_id, body.month, body.amount, body.description, body.salary_pct, body.payment_day)
     except Exception as exc:
         logger.exception("POST /api/primas failed.")
         raise HTTPException(500, "Could not create prima.") from exc
