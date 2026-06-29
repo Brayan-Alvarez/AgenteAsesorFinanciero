@@ -498,6 +498,36 @@ def create_debt_payment(
     payment_type:   str             = "manual",
 ) -> dict:
     sb  = _sb()
+
+    # For manual payments (no pre-existing transaction), create a matching expense
+    # transaction so the abono appears in the main transactions list and Dashboard totals.
+    # Auto-pay installments already pass transaction_id, so we skip them.
+    tx_id = transaction_id
+    if paid_by and tx_id is None:
+        debt_info = sb.table("debts").select("name, subcategory_id") \
+            .eq("id", debt_id).single().execute().data
+        if debt_info:
+            sub_id = debt_info.get("subcategory_id")
+            if sub_id:
+                sub_res = sb.table("subcategories").select("category_id") \
+                    .eq("id", sub_id).single().execute()
+                cat_id = sub_res.data["category_id"] if sub_res.data else _get_or_create_debts_category()
+            else:
+                cat_id = _get_or_create_debts_category()
+
+            tx_res = sb.table("transactions").insert({
+                "user_id":        paid_by,
+                "date":           date,
+                "category_id":    cat_id,
+                "subcategory_id": sub_id,
+                "description":    description or f"Abono — {debt_info['name']}",
+                "amount":         amount,
+                "type":           "expense",
+                "debt_id":        debt_id,
+                "notes":          notes,
+            }).execute()
+            tx_id = tx_res.data[0]["id"]
+
     res = sb.table("debt_payments").insert({
         "debt_id":        debt_id,
         "amount":         amount,
@@ -507,7 +537,7 @@ def create_debt_payment(
         "notes":          notes,
         "capital_amount": capital_amount,
         "interest_amount":interest_amount,
-        "transaction_id": transaction_id,
+        "transaction_id": tx_id,
         "payment_type":   payment_type,
     }).execute()
     payment = res.data[0]
@@ -833,10 +863,14 @@ def process_pending_subscriptions(year: int, month: int) -> int:
 
 def delete_debt_payment(payment_id: str) -> None:
     sb = _sb()
-    # Re-open the debt if it was marked paid
-    payment = sb.table("debt_payments").select("debt_id").eq("id", payment_id).single().execute().data
+    # Fetch both debt_id and transaction_id before deletion
+    payment = sb.table("debt_payments").select("debt_id, transaction_id") \
+        .eq("id", payment_id).single().execute().data
     if payment:
         sb.table("debt_payments").delete().eq("id", payment_id).execute()
+        # Also delete the linked transaction so it disappears from the transactions list
+        if payment.get("transaction_id"):
+            sb.table("transactions").delete().eq("id", payment["transaction_id"]).execute()
         sb.table("debts").update({"status": "active"}).eq("id", payment["debt_id"]).execute()
 
 

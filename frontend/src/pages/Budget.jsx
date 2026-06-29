@@ -2158,8 +2158,8 @@ export default function Budget() {
   const handleCreateDebt    = async (data)           => { try { await createDebt(data); setShowDebtForm(false); await Promise.all([loadDebts(), reloadCategories()]); } catch (err) { console.error(err); alert(`Error al crear la deuda: ${err?.response?.data?.detail ?? err?.message ?? err}`); } };
   const handleEditDebt      = async (data)           => { try { await updateDebt(editingDebt.id, data); setEditingDebt(null); await loadDebts(); } catch (err) { console.error(err); alert(`Error al guardar: ${err?.response?.data?.detail ?? err?.message ?? err}`); } };
   const handleDeleteDebt    = async (id)             => { if (!confirm('¿Eliminar esta deuda y todos sus abonos?')) return; try { await deleteDebt(id); await loadDebts(); } catch (err) { console.error(err); } };
-  const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await loadDebts(); } catch (err) { console.error(err); } };
-  const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await loadDebts(); } catch (err) { console.error(err); } };
+  const handleAddPayment    = async (debtId, data)   => { try { await addDebtPayment(debtId, data); setPaymentTarget(null); await Promise.all([loadDebts(), reloadTransactions()]); } catch (err) { console.error(err); } };
+  const handleDeletePayment = async (paymentId)      => { try { await deleteDebtPayment(paymentId); await Promise.all([loadDebts(), reloadTransactions()]); } catch (err) { console.error(err); } };
 
   // ── Subscription actions ─────────────────────────────────────────────────────
   const handleCreateSubscription = async (data) => {
@@ -2308,15 +2308,17 @@ export default function Budget() {
       } else {
         const created = await createPrima(data);
         addPrimaLocal(created);
-        // Process immediately so the income transaction appears right away
+        // Process immediately so the income transaction is created in DB right away,
+        // then reload transactions so it appears in the Transactions page and Dashboard.
         await processPrimas(year, month).catch(() => {});
+        await reloadTransactions();
       }
       setShowPrimaForm(false);
       setEditingPrima(null);
     } catch (err) {
       alert(`Error al guardar la prima: ${err?.response?.data?.detail ?? err?.message ?? err}`);
     }
-  }, [editingPrima, updatePrimaLocal, addPrimaLocal, year, month]);
+  }, [editingPrima, updatePrimaLocal, addPrimaLocal, year, month, reloadTransactions]);
 
   return (
     <div>
