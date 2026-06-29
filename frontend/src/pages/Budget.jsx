@@ -18,7 +18,7 @@ import {
   getDebts, createDebt, deleteDebt, addDebtPayment, deleteDebtPayment,
   createCategory, deleteCategory, createSubcategory, deleteSubcategory,
   migrateCategory,
-  createSubscription, updateSubscription, cancelSubscription,
+  createSubscription, updateSubscription, cancelSubscription, processSubscriptions,
   getIncome, upsertIncome, getIncomeHistory, seedIncomeHistory,
   createPrima, updatePrima, deletePrima, processPrimas,
 } from '../api/client.js';
@@ -2169,12 +2169,19 @@ export default function Budget() {
     // If the "Suscripciones" category didn't exist locally, the backend may have
     // just created it — reload categories so the budget row appears immediately.
     if (!subscriptionsCat) await reloadCategories();
+    // Process immediately in case billing_day has already passed this month,
+    // then reload so the transaction appears in Dashboard and Transactions.
+    await processSubscriptions(year, month).catch(() => {});
+    await reloadTransactions();
   };
 
   const handleEditSubscription = async (data) => {
     const updated = await updateSubscription(editingSub.id, data);
     updateSubscriptionLocal(updated);
     setEditingSub(null);
+    // Reprocess in case the billing_day or amount changed for the current month.
+    await processSubscriptions(year, month).catch(() => {});
+    await reloadTransactions();
   };
 
   const handleCancelSubscription = async (sub) => {
