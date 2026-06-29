@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Annotated, Literal, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -156,40 +156,53 @@ _graph = build_graph()
 # Public API
 # ---------------------------------------------------------------------------
 
-def run_agent(user_message: str) -> str:
+def run_agent(user_message: str, history: list[dict] | None = None) -> str:
     """
     Run a single conversation turn through the financial advisor agent.
 
-    Builds a fresh initial state for each call (stateless between calls —
-    conversation history is not persisted across separate run_agent calls).
-    The Sheets data is served from the cache layer so repeated calls within
-    a session do not trigger extra API requests.
-
     Args:
-        user_message: The user's question or request as a plain string.
+        user_message: The user's current question or request.
+        history:      Previous turns as a list of {"role": "user"|"agent",
+                      "content": "..."} dicts. Converted to LangChain message
+                      objects and prepended to the initial state so the LLM
+                      has full conversation context. Capped at the last 20
+                      messages to keep token usage predictable.
 
     Returns:
         The agent's final text response as a string.
     """
-    # Determine current month and year from the system clock.
     now = datetime.now()
-    current_month = SPANISH_MONTHS[now.month - 1]   # 0-indexed list
+    current_month = SPANISH_MONTHS[now.month - 1]
     current_year  = now.year
 
+    # Convert history dicts → LangChain message objects.
+    # Cap at the most recent 20 messages (10 turns) to stay within token budgets
+    # when using smaller local models (Ollama). Gemini can handle more, but 20
+    # is a safe, consistent limit across both providers.
+    past: list = []
+    for msg in (history or [])[-20:]:
+        role    = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            past.append(HumanMessage(content=content))
+        elif role in ("agent", "assistant"):
+            past.append(AIMessage(content=content))
+
     initial_state: AgentState = {
-        "messages":           [HumanMessage(content=user_message)],
-        "financial_context":  {},   # reserved for future use by nodes / tools
-        "current_month":      current_month,
-        "current_year":       current_year,
+        "messages":          past + [HumanMessage(content=user_message)],
+        "financial_context": {},
+        "current_month":     current_month,
+        "current_year":      current_year,
     }
 
-    logger.info("run_agent called: month=%s year=%d", current_month, current_year)
+    logger.info(
+        "run_agent called: month=%s year=%d history_turns=%d",
+        current_month, current_year, len(past),
+    )
 
     final_state = _graph.invoke(initial_state)
 
-    # The last message in the final state is always the agent's reply.
-    # Gemini 2.5+ returns content as a list of blocks [{"type": "text", "text": "..."}]
-    # instead of a plain string. Normalize to string so ChatResponse validates correctly.
+    # Gemini 2.5+ returns content as a list of blocks; normalize to plain string.
     content = final_state["messages"][-1].content
     if isinstance(content, list):
         return "".join(block.get("text", "") for block in content if isinstance(block, dict))

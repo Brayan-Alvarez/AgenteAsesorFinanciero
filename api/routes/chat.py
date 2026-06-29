@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from agent.graph import run_agent
-from api.models import ChatRequest, ChatResponse
+from api.models import ChatMessage, ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
     logger.info("POST /api/chat — message length: %d chars", len(request.message))
 
     try:
-        reply = run_agent(request.message)
+        history = [m.model_dump() for m in request.history]
+        reply = run_agent(request.message, history)
     except Exception as exc:
         # Log the full traceback server-side; return a generic message to the client
         # so internal details (file paths, API keys) are never leaked.

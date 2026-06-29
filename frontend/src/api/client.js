@@ -19,8 +19,8 @@ const api = axios.create({
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
 
-export async function sendMessage(message) {
-  const response = await api.post("/api/chat", { message });
+export async function sendMessage(message, history = []) {
+  const response = await api.post("/api/chat", { message, history });
   return response.data;
 }
 

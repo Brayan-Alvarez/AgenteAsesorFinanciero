@@ -95,8 +95,12 @@ export default function Chat() {
     setInput('');
     addMsg('user', text);
     setLoading(true);
+    // Snapshot history BEFORE the new user message is added (React batches the
+    // state update from addMsg, so chatHistory here still has the old value).
+    // The backend receives history = previous turns + message = current turn.
+    const historyForApi = chatHistory.map(m => ({ role: m.role, content: m.text }));
     try {
-      const data = await sendMessage(text);
+      const data = await sendMessage(text, historyForApi);
       addMsg('agent', data.reply);
     } catch (err) {
       addMsg('agent', `⚠ ${err.message}`);

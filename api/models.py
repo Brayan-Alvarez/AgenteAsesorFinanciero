@@ -18,6 +18,12 @@ from pydantic import BaseModel, Field
 # Chat  (POST /api/chat)
 # ---------------------------------------------------------------------------
 
+class ChatMessage(BaseModel):
+    """A single message in the conversation history."""
+    role: str     # "user" | "agent"
+    content: str
+
+
 class ChatRequest(BaseModel):
     """Body sent by the client to start a conversation turn."""
 
@@ -26,6 +32,11 @@ class ChatRequest(BaseModel):
         min_length=1,
         description="The user's question or request in natural language.",
         examples=["¿Cómo vamos con el presupuesto este mes?"],
+    )
+    history: list[ChatMessage] = Field(
+        default_factory=list,
+        description="Previous turns of the conversation (up to 20). "
+                    "Older messages are trimmed automatically.",
     )
 
 
